@@ -178,9 +178,11 @@ let PROP_TOT=0,EXT_TOT=0,PROP_SIN=0;
 /* Costo de flota propia POR DÍA (web/Supabase). Si existe DATA.flotaDia, se usa en lugar del monto mensual. */
 const DAILY=Array.isArray(DATA.flotaDia);
 const FDIA={};if(DAILY)DATA.flotaDia.forEach(d=>{FDIA[String(d.fecha).slice(0,10)]={costo:+d.costo||0,nota:d.nota||'',por:d.por||'',en:d.en||''}});
-const VDAY=VJ.id.map((_,v)=>String((VJ.cfFecha&&VJ.cfFecha[v])||VJ.ini[v]||'').slice(0,10));   // día del viaje: fecha del Resumen; si no, inicio de carga
+const VDAY=VJ.id.map((_,v)=>String(VJ.ini[v]||(VJ.cfFecha&&VJ.cfFecha[v])||'').slice(0,10));   // día del viaje (referencia): inicio de carga WMS
+const LDAY=i=>DAYS[L.d[i]];   // día de cada línea = Fecha Carga del WMS (la misma del filtro y del gráfico Por día)
 const cpropMes=()=>DAILY?Object.values(FDIA).reduce((a,d)=>a+d.costo,0):PAR.cprop;
-let POOLD={};
+let POOLD={},MINDIA={};
+const MINV=META.minViaje!=null&&isFinite(+META.minViaje)?+META.minViaje:85000;   // ₡ mínimo por viaje de flota propia (parámetro costo_min_viaje_propio)
 for(let i=0;i<N;i++){
   const a=L.a[i],c=L.c[i];
   KG[i]=Q[i]*(AR.kg[a]||0); M3[i]=Q[i]*(AR.m3[a]||0);
@@ -199,13 +201,38 @@ function computeCost(){
   for(let i=0;i<N;i++){const v=L.v[i],k=KM[i];const km=k===k?k:(den[v]>0?num[v]/den[v]:glob);WK[i]=COB[i]*km;ws[v]+=WK[i]}
   for(let i=0;i<N;i++){const v=L.v[i];if(!(ws[v]>0)){WK[i]=Q[i]}}
   ws.fill(0);for(let i=0;i<N;i++)ws[L.v[i]]+=WK[i];
-  let pool=0;POOLD={};
-  for(let i=0;i<N;i++){const v=L.v[i],w=WK[i]*(VJ.share[v]||0);pool+=w;if(DAILY&&w>0){const d=VDAY[v];POOLD[d]=(POOLD[d]||0)+w}}
+  /* Flota propia con costo MÍNIMO por viaje (MINV, costo fijo) y TOPE del día:
+     unidad = viaje × día de carga (mensual: viaje). Peso de la unidad = Σ w × participación propia.
+     Mínimo de la unidad = MINV × participación propia × (peso de la unidad ÷ peso del viaje), así un viaje
+     cargado en dos días suma un solo mínimo. Reparto del monto C del grupo (día o mes):
+       1) proporcional a peso cobrable × km;  2) las unidades bajo su mínimo suben al mínimo y el resto
+       del monto se reparte entre las demás (se repite hasta que ninguna quede bajo el mínimo);
+       3) si los mínimos suman más que C, el monto C se reparte en proporción a los mínimos (el día nunca supera C). */
+  const UK=new Int32Array(N).fill(-1),uKey=new Map(),uW=[],uV=[],uG=[],tW=new Float64Array(NV);
+  for(let i=0;i<N;i++){const v=L.v[i],w=WK[i]*(VJ.share[v]||0);if(!(w>0))continue;
+    const g=DAILY?LDAY(i):'mes',k=v+'|'+g;let u=uKey.get(k);
+    if(u===undefined){u=uW.length;uKey.set(k,u);uW.push(0);uV.push(v);uG.push(g)}
+    UK[i]=u;uW[u]+=w;tW[v]+=w}
+  const uA=new Float64Array(uW.length),grp={};
+  uW.forEach((w,u)=>{(grp[uG[u]]||(grp[uG[u]]=[])).push(u)});
+  POOLD={};MINDIA={};
+  Object.entries(grp).forEach(([g,us])=>{
+    POOLD[g]=us.reduce((a,u)=>a+uW[u],0);
+    const C=DAILY?(FDIA[g]?FDIA[g].costo:0):PAR.cprop;
+    const fl=u=>MINV*(VJ.share[uV[u]]||0)*(tW[uV[u]]>0?uW[u]/tW[uV[u]]:0);
+    const info={viajes:new Set(us.map(u=>uV[u])).size,alMin:0,insuf:false,sumMin:us.reduce((a,u)=>a+fl(u),0),costo:C};
+    MINDIA[g]=info;if(!(C>0))return;
+    if(info.sumMin>=C&&info.sumMin>0){us.forEach(u=>uA[u]=C*fl(u)/info.sumMin);info.insuf=true;info.alMin=info.viajes;return}
+    const fijo=new Set();let ok=false;
+    while(!ok){ok=true;const libres=us.filter(u=>!fijo.has(u));
+      const resto=C-[...fijo].reduce((a,u)=>a+fl(u),0),wl=libres.reduce((a,u)=>a+uW[u],0);
+      fijo.forEach(u=>uA[u]=fl(u));
+      libres.forEach(u=>{uA[u]=wl>0?resto*uW[u]/wl:0;if(uA[u]<fl(u)-1e-6){fijo.add(u);ok=false}})}
+    info.alMin=new Set([...fijo].map(u=>uV[u])).size});
   EXT_TOT=0;PROP_TOT=0;PROP_SIN=0;
-  for(let i=0;i<N;i++){const v=L.v[i],w=WK[i]*(VJ.share[v]||0);
+  for(let i=0;i<N;i++){const v=L.v[i],w=WK[i]*(VJ.share[v]||0),u=UK[i];
     CFE[i]=ws[v]>0?WK[i]/ws[v]*(VJ.costoExt[v]||0):0;
-    if(DAILY){const d=VDAY[v],pd=POOLD[d]||0;CFP[i]=pd>0&&FDIA[d]?w/pd*FDIA[d].costo:0}
-    else CFP[i]=pool>0?w/pool*PAR.cprop:0;
+    CFP[i]=u>=0&&uW[u]>0?uA[u]*w/uW[u]:0;
     CF[i]=CFE[i]+CFP[i];EXT_TOT+=CFE[i];PROP_TOT+=CFP[i]}
   if(DAILY)Object.entries(FDIA).forEach(([d,x])=>{if(!(POOLD[d]>0))PROP_SIN+=x.costo});   // días con costo pero sin viajes propios
 }
@@ -391,6 +418,7 @@ let CUR='red';
 
 /* ---- Rutas y costos: vista única jerárquica ---- */
 const HIER={
+  viaje:{label:'Viaje › Zona › Cliente › Artículo (SKU)',levels:['viaje','zonaNom','cliente','articulo']},
   zona:{label:'Zona › Cliente › Viaje › Artículo',levels:['zonaNom','cliente','viaje','articulo']},
   zonaviaje:{label:'Zona › Viaje › Cliente › Artículo',levels:['zonaNom','viaje','cliente','articulo']},
   region:{label:'Región › Zona › Cliente › Artículo',levels:['region','zonaNom','cliente','articulo']},
@@ -401,7 +429,7 @@ const HIER={
   cliente:{label:'Cliente › Artículo › Viaje',levels:['cliente','articulo','viaje']},
   articulo:{label:'Artículo › Cliente',levels:['articulo','cliente']},
   prov:{label:'Provincia › Cantón › Cliente › Artículo',levels:['provincia','canton','cliente','articulo']}};
-const TR={h:'zona',open:new Set(),sort:'cf',dir:-1,more:{}};
+const TR={h:'viaje',open:new Set(),sort:'nombre',dir:-1,more:{}};   // por defecto: viajes en orden de número
 const TCOLS=[
   {k:'viajes',l:'Viajes',f:g=>g.viajes.size,d:0},{k:'clientes',l:'Clientes',f:g=>g.clientes.size,d:0},
   {k:'kg',l:'Peso kg',f:g=>g.kg,d:0},{k:'m3',l:'Vol m³',f:g=>g.m3,d:2},{k:'cob',l:'Peso cobrable kg',f:g=>g.cob,d:0},
@@ -429,7 +457,8 @@ addView({id:'red',title:'Rutas y costos',render(host){
    <div style="margin-top:10px;font-size:13px;line-height:1.6">
    <p><b>1. Costo de cada viaje.</b> Se toma del <i>${esc(META.fuenteCosto)}</i> y se cruza por <b>Viaje WMS = N° viaje</b>. Si un viaje tiene varias filas (zonas o guías) se suman.
      <br>• <b>Externo:</b> se usa el <i>Costo flete ₡</i> del archivo.
-     <br>• <b>Flota propia:</b> el costo del archivo <b>no se usa</b>. ${DAILY?`Se usa el costo <b>por día</b> ingresado en la pestaña <i>Flota propia</i> (mes ₡ ${fmtN(cpropMes(),0)}). El costo de cada día se reparte solo entre los viajes propios de ese día (fecha del Resumen de rutas; si no, inicio de carga).`:`Se reparte el monto ingresado en <i>Costo flota propia ₡ (mes)</i> (hoy ₡ ${fmtN(PAR.cprop,0)}).`}
+     <br>• <b>Flota propia:</b> el costo del archivo <b>no se usa</b>. ${DAILY?`Se usa el costo <b>por día</b> ingresado en la pestaña <i>Flota propia</i> (mes ₡ ${fmtN(cpropMes(),0)}). El costo de cada día se reparte solo entre las líneas de viajes propios con <b>Fecha Carga (WMS)</b> de ese día. Si un viaje se cargó en dos días, cada parte recibe costo de su día.
+       <br>• <b>Mínimo por viaje propio: ₡ ${fmtN(MINV,0)}</b> (costo fijo de mano de obra, camión, etc.). Si el reparto le da menos a un viaje, sube a ₡ ${fmtN(MINV,0)} y la diferencia se descuenta de los demás viajes del día. <b>El total del día nunca supera el monto ingresado</b>: si los mínimos no caben (viajes × ₡ ${fmtN(MINV,0)} &gt; costo del día), el monto del día se reparte en proporción al mínimo de cada viaje (partes iguales entre viajes 100% propios). En viajes mixtos el mínimo se aplica solo a la parte propia (₡ ${fmtN(MINV,0)} × participación propia).`:`Se reparte el monto ingresado en <i>Costo flota propia ₡ (mes)</i> (hoy ₡ ${fmtN(PAR.cprop,0)}), con mínimo de ₡ ${fmtN(MINV,0)} por viaje propio sin superar el monto del mes.`}
      <br>• Viaje mixto: participación propia = costo propio del archivo ÷ costo total del viaje (si el costo es 0, por número de filas).</p>
    <p><b>2. Peso cobrable de cada línea</b> (artículo × cliente × viaje):
      <br><code>peso cobrable = máx( peso real kg , volumen m³ × ${fmtN(PAR.fvol)} )</code>
@@ -439,19 +468,20 @@ addView({id:'red',title:'Rutas y costos',render(host){
    <p><b>4. Peso de reparto</b> de la línea: <code>w = peso cobrable × km</code> (kg·km cobrables).</p>
    <p><b>5. Costo asignado a la línea</b>
      <br>• Externo: <code>costo línea = costo externo del viaje × w ÷ Σ w de las líneas del viaje</code>
-     <br>• Flota propia: ${DAILY?'<code>costo línea = costo flota propia del DÍA × (w × participación propia) ÷ Σ (w × participación propia) de las líneas de viajes propios de ese día</code>':'<code>costo línea = costo flota propia del mes × (w × participación propia) ÷ Σ (w × participación propia) de todas las líneas del mes</code>'}
+     <br>• Flota propia: ${DAILY?'<code>costo viaje = máx( ₡ '+fmtN(MINV,0)+' , costo del DÍA × Σw del viaje ÷ Σw de los viajes propios del día )</code>, reajustando los demás para que la suma del día = costo del día. <code>costo línea = costo viaje × w ÷ Σw del viaje</code> (w con participación propia)':'<code>costo viaje = máx( ₡ '+fmtN(MINV,0)+' , costo del mes × Σw del viaje ÷ Σw de los viajes propios )</code>, reajustando los demás para que la suma = costo del mes. <code>costo línea = costo viaje × w ÷ Σw del viaje</code>'}
      <br>• Costo total = externo + flota propia. Si un viaje no tiene peso ni volumen, se reparte por unidades.</p>
    <p><b>6. Agregación.</b> Zona, cliente, viaje, artículo o BDF = suma de sus líneas, por eso todos los niveles cuadran con el total. <code>₡/kg cobrable = costo ÷ peso cobrable</code> (solo viajes con costo); <code>₡/ton·km = costo ÷ (kg real × km ÷ 1000)</code>.</p>
    <p><b>Ejemplo.</b> Viaje externo de ₡ 100 000 con dos clientes: A lleva 200 kg y 0,3 m³ a 20 km → cobrable máx(200, 0,3×${fmtN(PAR.fvol)}=${fmtN(0.3*PAR.fvol)}) = ${fmtN(Math.max(200,0.3*PAR.fvol))} kg → w = ${fmtN(Math.max(200,0.3*PAR.fvol)*20)}. B lleva 50 kg y 1,2 m³ a 60 km → cobrable ${fmtN(Math.max(50,1.2*PAR.fvol))} kg → w = ${fmtN(Math.max(50,1.2*PAR.fvol)*60)}. A paga ₡ ${fmtN(100000*Math.max(200,0.3*PAR.fvol)*20/(Math.max(200,0.3*PAR.fvol)*20+Math.max(50,1.2*PAR.fvol)*60))} y B ₡ ${fmtN(100000*Math.max(50,1.2*PAR.fvol)*60/(Math.max(200,0.3*PAR.fvol)*20+Math.max(50,1.2*PAR.fvol)*60))}.</p>
    <p style="color:var(--text3)">Supuestos: el factor ${META.factor} y el factor ${fmtN(PAR.fvol)} kg/m³ no son mediciones; los pesos/volúmenes con confianza baja son estimados por familia. La secuencia real de entrega no se conoce.</p>
    </div></details>
   <div class="tools" style="margin-top:12px"><div class="field"><label>Jerarquía</label><select id="th">${Object.entries(HIER).map(([k,h])=>`<option value="${k}" ${TR.h===k?'selected':''}>${esc(h.label)}</option>`).join('')}</select></div>
-   <div class="field"><label>Ordenar por</label><select id="ts">${TCOLS.filter(c=>!c.pct||c.k==='part').map(c=>`<option value="${c.k}" ${TR.sort===c.k?'selected':''}>${esc(c.l)}</option>`).join('')}</select></div>
+   <div class="field"><label for="ts">Ordenar por</label><select id="ts"><option value="nombre" ${TR.sort==='nombre'?'selected':''}>Nombre / N° de viaje</option>${TCOLS.filter(c=>!c.pct||c.k==='part').map(c=>`<option value="${c.k}" ${TR.sort===c.k?'selected':''}>${esc(c.l)}</option>`).join('')}</select></div>
    <button class="btn ghost sm" id="tx1">Expandir nivel 1</button><button class="btn ghost sm" id="tx0">Contraer todo</button><button class="btn sm" id="tcsv">Exportar CSV (visible)</button></div>
-  <div class="note">Clic en una fila para expandir (zona → cliente → viaje → artículo). El costo de un viaje que pasa por varias zonas se reparte entre ellas según peso cobrable × km de sus clientes. ⓘ abre el detalle. El costo de cada nivel es la suma de sus líneas, prorrateado por peso cobrable × distancia.</div>
+  <div class="note">Clic en una fila para expandir (${esc(HIER[TR.h].label.replace(/ › /g,' → ').toLowerCase())}). El costo de un viaje que pasa por varias zonas se reparte entre ellas según peso cobrable × km de sus clientes. ⓘ abre el detalle. El costo de cada nivel es la suma de sus líneas, prorrateado por peso cobrable × distancia.</div>
   <div class="tablewrap" style="max-height:74vh"><table id="tt"><thead><tr><th>Nombre</th>${TCOLS.map(c=>`<th class="num">${esc(c.l)}</th>`).join('')}</tr></thead><tbody></tbody></table></div>`;
   const H=HIER[TR.h].levels;const out=[];
-  const sortRows=rows=>{const c=TCOLS.find(c=>c.k===TR.sort)||TCOLS[9];return rows.sort((a,b)=>{const x=c.f(a.g,a.p),y=c.f(b.g,b.p);return ((y===y?y:-1e18)-(x===x?x:-1e18))})};
+  const sortRows=rows=>{if(TR.sort==='nombre')return rows.sort((a,b)=>String(a.g.label).localeCompare(String(b.g.label),'es',{numeric:true}));
+    const c=TCOLS.find(c=>c.k===TR.sort)||TCOLS[9];return rows.sort((a,b)=>{const x=c.f(a.g,a.p),y=c.f(b.g,b.p);return ((y===y?y:-1e18)-(x===x?x:-1e18))})};
   function build(idx,depth,parent,path){
     const dim=H[depth];let gs=groupBy(dim,idx).map(g=>({g,p:parent}));sortRows(gs);
     const lim=TR.more[path]||100;const shown=gs.slice(0,lim);
@@ -565,7 +595,7 @@ function interpBDF(rows,T){
     <li><b>Peso cobrable</b> = máx(peso real, m³ × ${fmtN(PAR.fvol)} kg/m³). El factor ${fmtN(PAR.fvol)} es un estándar de transporte terrestre, no una medición propia; con un factor menor, los artículos voluminosos pagan menos.</li>
     <li><b>Distancia</b> = km en línea recta desde el CD × ${META.factor} hasta el cliente (ida). No se conoce la secuencia real de entrega; un cliente al final de la ruta y otro en el camino pagan según su propia distancia.</li>
     <li><b>Tarifa del viaje</b> (₡ por kg·km) = costo del viaje ÷ Σ(peso cobrable × km) de sus líneas. Viajes con poca carga o externos más caros elevan la tarifa de todo lo que llevan.</li>
-    <li><b>Flota propia</b>: el costo del archivo no se usa; ${DAILY?`el costo ingresado por día (mes ₡ ${fmtN(cpropMes(),0)}) se reparte entre los viajes propios de cada día; un día caro encarece lo que viajó ese día.`:`el costo ingresado (₡ ${fmtN(PAR.cprop,0)}) se reparte en el mes entre todos los viajes propios con una sola tarifa.`} Si está en 0, las categorías que viajan más en flota propia se ven artificialmente baratas.</li>
+    <li><b>Flota propia</b>: el costo del archivo no se usa; ${DAILY?`el costo ingresado por día (mes ₡ ${fmtN(cpropMes(),0)}) se reparte entre los viajes propios de cada día, con mínimo de ₡ ${fmtN(MINV,0)} por viaje y sin superar el monto del día; un día caro encarece lo que viajó ese día y los viajes chicos cargan al menos el costo fijo.`:`el costo ingresado (₡ ${fmtN(PAR.cprop,0)}) se reparte en el mes entre todos los viajes propios con una sola tarifa.`} Si está en 0, las categorías que viajan más en flota propia se ven artificialmente baratas.</li>
     <li><b>Viajes sin costo</b> en el Resumen de rutas no reciben costo; sus artículos se ven más baratos (no entran en ₡/kg cobrable).</li>
     <li><b>Pesos y volúmenes</b> con confianza baja (estimados por familia o similitud) y clientes con zona/km estimados por cantón pueden mover el reparto entre categorías.</li>
     <li><b>Clientes</b> = clientes distintos con despacho en la categoría; un cliente compra de varias categorías, por eso la suma por categoría supera el total.</li></ul></div>`;
@@ -678,7 +708,7 @@ const FED={};   // ediciones sin guardar
 addView({id:'flota',title:'Flota propia',render(host){
   const days=monthDays(),ed=API.rol==='editor';
   const st={};days.forEach(d=>st[d]={vj:new Set(),cob:0,w:0,kg:0,arch:0});
-  for(let i=0;i<N;i++){const v=L.v[i],sh=VJ.share[v]||0;if(!(sh>0))continue;const d=VDAY[v];if(!st[d])continue;
+  for(let i=0;i<N;i++){const v=L.v[i],sh=VJ.share[v]||0;if(!(sh>0))continue;const d=LDAY(i);if(!st[d])continue;
     st[d].vj.add(v);st[d].cob+=COB[i]*sh;st[d].kg+=KG[i]*sh;st[d].w+=WK[i]*sh}
   VJ.id.forEach((_,v)=>{const d=VDAY[v];if(st[d]&&VJ.costoPropArch[v])st[d].arch+=+VJ.costoPropArch[v]});
   const val=d=>d in FED?FED[d]:(FDIA[d]?FDIA[d].costo:'');
@@ -686,7 +716,8 @@ addView({id:'flota',title:'Flota propia',render(host){
   const sinViaje=days.filter(d=>(+val(d)||0)>0&&!st[d].vj.size);
   const pend=Object.keys(FED).length;
   const DSN=['dom','lun','mar','mié','jue','vie','sáb'];
-  host.innerHTML=`<div class="note">Costo real de la operación de flota propia <b>por día</b>. Se guarda en Supabase para todos y el costo de cada día se reparte solo entre los viajes propios de ese día (peso cobrable × km). El costo de flota propia del Resumen de rutas no se usa; se muestra como referencia.</div>
+  host.innerHTML=`<div class="note">Costo real de la operación de flota propia <b>por día</b>. Se guarda en Supabase para todos y el costo de cada día se reparte solo entre los viajes propios cargados ese día según la Fecha Carga del WMS (peso cobrable × km), con un <b>mínimo de ₡ ${fmtN(MINV,0)} por viaje</b> (costo fijo). El total del día nunca supera el monto ingresado. El costo de flota propia del Resumen de rutas no se usa; se muestra como referencia.</div>
+   ${(()=>{const ins=days.filter(d=>MINDIA[d]&&MINDIA[d].insuf&&MINDIA[d].costo>0);return ins.length?`<div class="warn">Días donde el mínimo no alcanza (viajes × ₡ ${fmtN(MINV,0)} supera el costo del día; se reparte el monto del día en partes iguales por viaje): ${ins.map(d=>`${d.slice(8)}/${d.slice(5,7)} (${MINDIA[d].viajes} viajes, se necesitan ₡ ${fmtN(MINDIA[d].sumMin,0)})`).join(', ')}</div>`:''})()}
    <div class="grid kpis">${kpi('Flota propia del mes','₡ '+fmtN(tot,0),pend?pend+' día(s) sin guardar':'guardado')}${kpi('Asignado a viajes','₡ '+fmtN(PROP_TOT,0),PROP_SIN>0?'₡ '+fmtN(PROP_SIN,0)+' sin viajes propios':'todo asignado')}
    ${kpi('Días con viajes propios',fmtN(days.filter(d=>st[d].vj.size).length)+' / '+days.length)}${kpi('₡ / kg cobrable propio','₡ '+fmtN(days.reduce((a,d)=>a+st[d].cob,0)>0?tot/days.reduce((a,d)=>a+st[d].cob,0):NaN,2))}${kpi('Referencia archivo (no usada)','₡ '+fmtN(totArch,0))}</div>
    ${ed?`<div class="tools" style="margin-top:12px"><div class="field"><label>Distribuir un monto del mes</label><input type="text" inputmode="numeric" id="fdM" placeholder="₡ total del mes" style="width:160px"></div>
@@ -694,13 +725,14 @@ addView({id:'flota',title:'Flota propia',render(host){
      <button class="btn ghost sm" id="fdA">Usar referencia del archivo</button>
      <span class="sp"></span><button class="btn" id="fdS" ${pend?'':'disabled'}>Guardar ${pend?pend+' cambio(s)':''}</button></div>`:'<div class="warn">Solo usuarios editores pueden modificar el costo de flota propia.</div>'}
    ${sinViaje.length?`<div class="warn">Días con costo pero sin viajes propios (no se reparten): ${sinViaje.join(', ')}</div>`:''}
-   <div class="tablewrap" style="max-height:70vh;margin-top:10px"><table><thead><tr><th>Día</th><th class="num">Viajes propios</th><th class="num">Peso real kg</th><th class="num">Peso cobrable kg</th><th class="num">Ref. archivo ₡</th><th class="num">Costo real ₡</th><th class="num">₡ / kg cobrable</th><th class="num">₡ / viaje</th><th>Nota</th><th>Actualizado</th></tr></thead><tbody>
+   <div class="tablewrap" style="max-height:70vh;margin-top:10px"><table><thead><tr><th>Día</th><th class="num">Viajes propios</th><th class="num">Peso real kg</th><th class="num">Peso cobrable kg</th><th class="num">Ref. archivo ₡</th><th class="num">Costo real ₡</th><th class="num">₡ / kg cobrable</th><th class="num">₡ / viaje</th><th class="num">Viajes al mínimo</th><th>Nota</th><th>Actualizado</th></tr></thead><tbody>
    ${days.map(d=>{const x=st[d],c=+val(d)||0,wd=DSN[new Date(d+'T12:00:00').getDay()],f=FDIA[d];
      return `<tr style="${x.vj.size?'':'color:var(--text3)'}${d in FED?';background:var(--amber-soft)':''}"><td>${wd} ${d.slice(8)}</td><td class="num">${x.vj.size||''}</td><td class="num">${x.kg?fmtN(x.kg,0):''}</td><td class="num">${x.cob?fmtN(x.cob,0):''}</td><td class="num">${x.arch?fmtN(x.arch,0):''}</td>
       <td class="num">${ed?`<input type="text" inputmode="numeric" data-d="${d}" value="${c?fmtN(c,0):''}" aria-label="Costo ${d}" style="width:130px;text-align:right">`:fmtN(c,0)}</td>
       <td class="num">${c&&x.cob?fmtN(c/x.cob,2):''}</td><td class="num">${c&&x.vj.size?fmtN(c/x.vj.size,0):''}</td>
+      <td class="num" ${MINDIA[d]&&MINDIA[d].insuf&&c?'style="color:var(--red)" title="El mínimo no alcanza con el costo del día"':''}>${c&&MINDIA[d]&&MINDIA[d].alMin?fmtN(MINDIA[d].alMin)+(MINDIA[d].insuf?' ⚠':''):''}</td>
       <td>${ed?`<input type="text" data-n="${d}" value="${esc(f?f.nota:'')}" aria-label="Nota ${d}" style="width:180px">`:esc(f?f.nota:'')}</td><td style="font-size:11px;color:var(--text3)">${f&&f.por?esc(f.por.split('@')[0])+' · '+esc(String(f.en).slice(0,16).replace('T',' ')):''}</td></tr>`}).join('')}
-   <tr style="font-weight:700;background:var(--bg3)"><td>Total</td><td class="num">${fmtN(days.reduce((a,d)=>a+st[d].vj.size,0))}</td><td class="num">${fmtN(days.reduce((a,d)=>a+st[d].kg,0),0)}</td><td class="num">${fmtN(days.reduce((a,d)=>a+st[d].cob,0),0)}</td><td class="num">${fmtN(totArch,0)}</td><td class="num">${fmtN(tot,0)}</td><td></td><td></td><td></td><td></td></tr></tbody></table></div>`;
+   <tr style="font-weight:700;background:var(--bg3)"><td>Total</td><td class="num">${fmtN(days.reduce((a,d)=>a+st[d].vj.size,0))}</td><td class="num">${fmtN(days.reduce((a,d)=>a+st[d].kg,0),0)}</td><td class="num">${fmtN(days.reduce((a,d)=>a+st[d].cob,0),0)}</td><td class="num">${fmtN(totArch,0)}</td><td class="num">${fmtN(tot,0)}</td><td></td><td></td><td class="num">${fmtN(days.reduce((a,d)=>a+(MINDIA[d]&&(+val(d)||0)?MINDIA[d].alMin:0),0))}</td><td></td><td></td></tr></tbody></table></div>`;
   if(!ed)return;
   const pn=v=>{v=String(v).replace(/[^\d,.]/g,'');if(/,\d{1,2}$/.test(v))v=v.replace(/\./g,'').replace(',','.');else if((v.match(/\./g)||[]).length>1||/\.\d{3}$/.test(v))v=v.replace(/[.,]/g,'');else v=v.replace(/,/g,'');const n=parseFloat(v);return isFinite(n)?n:0};
   host.querySelectorAll('input[data-d]').forEach(i=>i.onchange=()=>{const d=i.dataset.d;const n=i.value.trim()===''?'':pn(i.value);FED[d]=n;renderView()});
@@ -1017,7 +1049,7 @@ async function cargar(session){
   if(r.error||!r.data||!r.data.lines||!r.data.lines.v){CARGANDO=false;err.textContent='Error al leer el mes '+MES+(r.error?': '+r.error.message:'');btn.disabled=false;return}
   const D=r.data,P=D.parametros||{};
   D.meta={generado:'Supabase '+MES,fuente:'Supabase · despachos WMS',compania:'Cofersa ('+(P.compania||'0109')+')',
-    factor:+P.factor_ruta||1.35,origen:[+P.cd_lat,+P.cd_lon],lineas:D.lines.v.length,factorVol:+P.factor_vol_default||333,
+    factor:+P.factor_ruta||1.35,minViaje:P.costo_min_viaje_propio!=null?+P.costo_min_viaje_propio:85000,origen:[+P.cd_lat,+P.cd_lon],lineas:D.lines.v.length,factorVol:+P.factor_vol_default||333,
     fuenteCosto:'Supabase · costos_rutas (Resumen de rutas)'};
   const fd=await sb.rpc('flota_dias_mes',{p_mes:MES});
   D.flotaDia=fd.error?[]:(fd.data||[]);
