@@ -705,6 +705,33 @@ if(API&&DAILY){
 const monthDays=()=>{const m=String(DATA.mes||DAYS[0]).slice(0,7);const [y,mm]=m.split('-').map(Number);const n=new Date(y,mm,0).getDate();
   return Array.from({length:n},(_,i)=>m+'-'+String(i+1).padStart(2,'0'))};
 const FED={};   // ediciones sin guardar
+const FSAVE={t:null,run:false,ult:'',err:''};
+const pendF=()=>Object.keys(FED).filter(k=>k!=='__n').length+(FED.__n?Object.keys(FED.__n).length:0);
+function estadoF(t){const el=document.getElementById('fdEstado');if(!el)return;
+  el.textContent=t||(FSAVE.err?'⚠ No se guardó: '+FSAVE.err+' (reintenta con Guardar ahora)':pendF()?'Cambios pendientes…':FSAVE.ult?'✓ Guardado en Supabase '+FSAVE.ult:'Los cambios se guardan solos en Supabase');
+  el.style.color=FSAVE.err?'var(--red)':pendF()||t?'var(--amber,#b45309)':'var(--teal)'}
+async function guardarFlota(){
+  if(FSAVE.run){clearTimeout(FSAVE.t);FSAVE.t=setTimeout(guardarFlota,500);return}
+  const notes=FED.__n||{};const keys=[...new Set([...Object.keys(FED).filter(d=>d!=='__n'),...Object.keys(notes)])];if(!keys.length){estadoF();return}
+  const list=keys.map(d=>{const c=d in FED?FED[d]:(FDIA[d]?FDIA[d].costo:'');return {fecha:d,costo:c===''||c==null?null:+c,nota:notes[d]!=null?notes[d]:(FDIA[d]?FDIA[d].nota:'')}});
+  FSAVE.run=true;estadoF('Guardando…');
+  try{const nuevo=await API.guardarDias(list);
+    Object.keys(FDIA).forEach(k=>delete FDIA[k]);nuevo.forEach(d=>{FDIA[String(d.fecha).slice(0,10)]={costo:+d.costo||0,nota:d.nota||'',por:d.por||'',en:d.en||''}});
+    // quitar de pendientes solo lo enviado (si el usuario editó mientras se guardaba, queda pendiente)
+    list.forEach(x=>{const ahora=x.fecha in FED?FED[x.fecha]:undefined;if(ahora===undefined||String(ahora===''?null:+ahora)===String(x.costo))delete FED[x.fecha];
+      if(FED.__n&&FED.__n[x.fecha]===x.nota)delete FED.__n[x.fecha]});
+    if(FED.__n&&!Object.keys(FED.__n).length)delete FED.__n;
+    FSAVE.err='';FSAVE.ult=new Date().toLocaleTimeString('es-CR',{hour:'2-digit',minute:'2-digit'});
+    computeCost();
+    const escribiendo=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#view input,#filters input');
+    if(!escribiendo){renderFilters();if(CUR==='flota')renderView()}   // no interrumpir si el usuario está escribiendo otro día
+    API.aviso('Guardado en Supabase: '+list.length+' día(s). Flota propia del mes ₡ '+fmtN(cpropMes(),0),'ok')}
+  catch(e){FSAVE.err=e.message;API.aviso('No se pudo guardar el costo de flota propia: '+e.message,'err')}
+  finally{FSAVE.run=false;estadoF();if(pendF()&&!FSAVE.err){clearTimeout(FSAVE.t);FSAVE.t=setTimeout(guardarFlota,300)}}   // lo editado mientras se guardaba
+}
+// avisar antes de salir (cambiar de mes, recargar, cerrar) si queda algo sin guardar
+window.addEventListener('beforeunload',e=>{if(pendF()||FSAVE.run){e.preventDefault();e.returnValue=''}});
+window.__OLO_PEND=()=>pendF()>0||FSAVE.run;
 addView({id:'flota',title:'Flota propia',render(host){
   const days=monthDays(),ed=API.rol==='editor';
   const st={};days.forEach(d=>st[d]={vj:new Set(),cob:0,w:0,kg:0,arch:0});
@@ -723,7 +750,7 @@ addView({id:'flota',title:'Flota propia',render(host){
    ${ed?`<div class="tools" style="margin-top:12px"><div class="field"><label>Distribuir un monto del mes</label><input type="text" inputmode="numeric" id="fdM" placeholder="₡ total del mes" style="width:160px"></div>
      <button class="btn ghost sm" id="fdD" title="Reparte el monto entre los días con viajes propios, según peso cobrable × km de cada día">Distribuir por carga del día</button>
      <button class="btn ghost sm" id="fdA">Usar referencia del archivo</button>
-     <span class="sp"></span><button class="btn" id="fdS" ${pend?'':'disabled'}>Guardar ${pend?pend+' cambio(s)':''}</button></div>`:'<div class="warn">Solo usuarios editores pueden modificar el costo de flota propia.</div>'}
+     <span class="sp"></span><span id="fdEstado" role="status" aria-live="polite" style="font-size:12.5px;align-self:center"></span><button class="btn ghost sm" id="fdS" ${pendF()||FSAVE.err?'':'disabled'}>Guardar ahora</button></div>`:'<div class="warn">Solo usuarios editores pueden modificar el costo de flota propia.</div>'}
    ${sinViaje.length?`<div class="warn">Días con costo pero sin viajes propios (no se reparten): ${sinViaje.join(', ')}</div>`:''}
    <div class="tablewrap" style="max-height:70vh;margin-top:10px"><table><thead><tr><th>Día</th><th class="num">Viajes propios</th><th class="num">Peso real kg</th><th class="num">Peso cobrable kg</th><th class="num">Ref. archivo ₡</th><th class="num">Costo real ₡</th><th class="num">₡ / kg cobrable</th><th class="num">₡ / viaje</th><th class="num">Viajes al mínimo</th><th>Nota</th><th>Actualizado</th></tr></thead><tbody>
    ${days.map(d=>{const x=st[d],c=+val(d)||0,wd=DSN[new Date(d+'T12:00:00').getDay()],f=FDIA[d];
@@ -731,20 +758,22 @@ addView({id:'flota',title:'Flota propia',render(host){
       <td class="num">${ed?`<input type="text" inputmode="numeric" data-d="${d}" value="${c?fmtN(c,0):''}" aria-label="Costo ${d}" style="width:130px;text-align:right">`:fmtN(c,0)}</td>
       <td class="num">${c&&x.cob?fmtN(c/x.cob,2):''}</td><td class="num">${c&&x.vj.size?fmtN(c/x.vj.size,0):''}</td>
       <td class="num" ${MINDIA[d]&&MINDIA[d].insuf&&c?'style="color:var(--red)" title="El mínimo no alcanza con el costo del día"':''}>${c&&MINDIA[d]&&MINDIA[d].alMin?fmtN(MINDIA[d].alMin)+(MINDIA[d].insuf?' ⚠':''):''}</td>
-      <td>${ed?`<input type="text" data-n="${d}" value="${esc(f?f.nota:'')}" aria-label="Nota ${d}" style="width:180px">`:esc(f?f.nota:'')}</td><td style="font-size:11px;color:var(--text3)">${f&&f.por?esc(f.por.split('@')[0])+' · '+esc(String(f.en).slice(0,16).replace('T',' ')):''}</td></tr>`}).join('')}
+      <td>${ed?`<input type="text" data-n="${d}" value="${esc(FED.__n&&FED.__n[d]!=null?FED.__n[d]:(f?f.nota:''))}" aria-label="Nota ${d}" style="width:180px">`:esc(f?f.nota:'')}</td><td style="font-size:11px;color:var(--text3)">${f&&f.por?esc(f.por.split('@')[0])+' · '+esc(String(f.en).slice(0,16).replace('T',' ')):''}</td></tr>`}).join('')}
    <tr style="font-weight:700;background:var(--bg3)"><td>Total</td><td class="num">${fmtN(days.reduce((a,d)=>a+st[d].vj.size,0))}</td><td class="num">${fmtN(days.reduce((a,d)=>a+st[d].kg,0),0)}</td><td class="num">${fmtN(days.reduce((a,d)=>a+st[d].cob,0),0)}</td><td class="num">${fmtN(totArch,0)}</td><td class="num">${fmtN(tot,0)}</td><td></td><td></td><td class="num">${fmtN(days.reduce((a,d)=>a+(MINDIA[d]&&(+val(d)||0)?MINDIA[d].alMin:0),0))}</td><td></td><td></td></tr></tbody></table></div>`;
   if(!ed)return;
   const pn=v=>{v=String(v).replace(/[^\d,.]/g,'');if(/,\d{1,2}$/.test(v))v=v.replace(/\./g,'').replace(',','.');else if((v.match(/\./g)||[]).length>1||/\.\d{3}$/.test(v))v=v.replace(/[.,]/g,'');else v=v.replace(/,/g,'');const n=parseFloat(v);return isFinite(n)?n:0};
-  host.querySelectorAll('input[data-d]').forEach(i=>i.onchange=()=>{const d=i.dataset.d;const n=i.value.trim()===''?'':pn(i.value);FED[d]=n;renderView()});
-  host.querySelectorAll('input[data-n]').forEach(i=>i.onchange=()=>{const d=i.dataset.n;FED[d]=d in FED?FED[d]:(FDIA[d]?FDIA[d].costo:0);(FED.__n||(FED.__n={}))[d]=i.value;renderView()});
+  // Guardado AUTOMÁTICO: cada cambio se envía a Supabase (0,8 s después de editar). Antes había que pulsar
+  // "Guardar" y al cambiar de mes o recargar se perdían los cambios sin aviso.
+  const prog=()=>{clearTimeout(FSAVE.t);FSAVE.t=setTimeout(guardarFlota,800);estadoF('Guardando…')};
+  host.querySelectorAll('input[data-d]').forEach(i=>i.onchange=()=>{const d=i.dataset.d;const n=i.value.trim()===''?'':pn(i.value);FED[d]=n;renderView();prog()});
+  host.querySelectorAll('input[data-n]').forEach(i=>i.onchange=()=>{const d=i.dataset.n;FED[d]=d in FED?FED[d]:(FDIA[d]?FDIA[d].costo:0);(FED.__n||(FED.__n={}))[d]=i.value;renderView();prog()});
   $('#fdD').onclick=()=>{const m=pn($('#fdM').value);const wt=days.reduce((a,d)=>a+st[d].w,0);if(!(m>0)||!(wt>0))return;
-    days.forEach(d=>{const v=st[d].w>0?Math.round(m*st[d].w/wt):'';if(v!==(FDIA[d]?FDIA[d].costo:''))FED[d]=v});renderView()};
-  $('#fdA').onclick=()=>{days.forEach(d=>{if(st[d].arch)FED[d]=Math.round(st[d].arch)});renderView()};
-  $('#fdS').onclick=async()=>{const notes=FED.__n||{};const list=Object.keys(FED).filter(d=>d!=='__n').map(d=>({fecha:d,costo:FED[d]===''?null:+FED[d],nota:notes[d]!=null?notes[d]:(FDIA[d]?FDIA[d].nota:'')}));
-    $('#fdS').disabled=true;$('#fdS').textContent='Guardando…';
-    try{const nuevo=await API.guardarDias(list);Object.keys(FDIA).forEach(k=>delete FDIA[k]);nuevo.forEach(d=>{FDIA[String(d.fecha).slice(0,10)]={costo:+d.costo||0,nota:d.nota||'',por:d.por||'',en:d.en||''}});
-      Object.keys(FED).forEach(k=>delete FED[k]);computeCost();renderFilters();renderView();API.aviso('Guardado en Supabase: '+list.length+' día(s). Flota propia del mes ₡ '+fmtN(cpropMes(),0),'ok')}
-    catch(e){API.aviso('No se pudo guardar: '+e.message,'err');$('#fdS').disabled=false;$('#fdS').textContent='Guardar'}};
+    if(!confirm('Se reemplaza el costo de todos los días del mes repartiendo ₡ '+fmtN(m,0)+'. ¿Continuar?'))return;
+    days.forEach(d=>{const v=st[d].w>0?Math.round(m*st[d].w/wt):'';if(v!==(FDIA[d]?FDIA[d].costo:''))FED[d]=v});renderView();prog()};
+  $('#fdA').onclick=()=>{if(!confirm('Se reemplaza el costo de los días con viajes propios por la referencia del archivo. ¿Continuar?'))return;
+    days.forEach(d=>{if(st[d].arch)FED[d]=Math.round(st[d].arch)});renderView();prog()};
+  $('#fdS').onclick=()=>{clearTimeout(FSAVE.t);guardarFlota()};
+  estadoF();
 }});
 
 /* ---- Cargar datos (Excel o CSV) ---- */
@@ -1043,7 +1072,7 @@ async function cargar(session){
       if(destino!==MES)aviso('No hay datos cargados para '+destino.slice(0,7)+'.','warn');
       try{history.replaceState(null,'',enlace(MES)+location.hash)}catch(e){}   // al recargar se conservan las fechas
       return false}
-    location.search=enlace(destino);return true;
+    esperarGuardado().then(()=>{location.search=enlace(destino)});return true;
   };
   const r=await sb.rpc('tablero_mes',{p_mes:MES});
   if(r.error||!r.data||!r.data.lines||!r.data.lines.v){CARGANDO=false;err.textContent='Error al leer el mes '+MES+(r.error?': '+r.error.message:'');btn.disabled=false;return}
@@ -1100,14 +1129,20 @@ function compartir(){const F=(window.OLO&&window.OLO.filters)||{},p=new URLSearc
   const u=location.origin+location.pathname+'?'+p.toString();
   (navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(()=>aviso('Enlace copiado: '+u+' · Cada persona entra con su usuario.','ok'))
    .catch(()=>prompt('Copia este enlace:',u))}
+// antes de cambiar de mes o salir: terminar de guardar el costo de flota propia (máx. 8 s)
+async function esperarGuardado(){
+  if(!(window.__OLO_PEND&&window.__OLO_PEND()))return;
+  aviso('Guardando el costo de flota propia antes de cambiar…','warn');
+  for(let i=0;i<40&&window.__OLO_PEND();i++)await new Promise(r=>setTimeout(r,200));
+}
 function barra(meses){
   const h=document.querySelector('header .sp');
   const box=document.createElement('div');box.style.cssText='display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text2)';
   box.innerHTML='<label for="sbMes">Mes</label><select id="sbMes">'+meses.map(x=>'<option value="'+x.mes+'"'+(x.mes===MES?' selected':'')+'>'+x.mes.slice(0,7)+' · '+new Intl.NumberFormat('es-CR').format(x.lineas)+' líneas</option>').join('')+
     '</select><span title="'+EMAIL+'">'+EMAIL.split('@')[0]+' · '+ROL+'</span><button class="btn ghost sm" id="sbOut">Salir</button>';
   h.after(box);
-  $('#sbMes').onchange=e=>{location.search='?mes='+e.target.value};
-  $('#sbOut').onclick=async()=>{await sb.auth.signOut();location.reload()};
+  $('#sbMes').onchange=async e=>{const v=e.target.value;await esperarGuardado();location.search='?mes='+v};
+  $('#sbOut').onclick=async()=>{await esperarGuardado();await sb.auth.signOut();location.reload()};
 }
 boot();
 })();
