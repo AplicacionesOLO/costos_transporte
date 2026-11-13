@@ -166,7 +166,7 @@ const KG=new Float64Array(N),M3=new Float64Array(N),KM=new Float64Array(N),Q=Flo
 const COB=new Float64Array(N),WK=new Float64Array(N),CF=new Float64Array(N),CAPL=new Float64Array(N);
 const HASC=Uint8Array.from(L.v.map(v=>VJ.conCosto[v]?1:0));
 const NV=VJ.id.length;
-/* Costo de cada viaje = Costo Benchmark del Resumen de rutas (único costo del tablero; se suma si el viaje tiene varias filas) */
+/* Costo de cada viaje = Costo de transporte del Resumen de rutas (único costo del tablero; se suma si el viaje tiene varias filas) */
 const VCOSTO=VJ.id.map((_,v)=>VJ.costo&&VJ.costo[v]!=null?+VJ.costo[v]||0:0);
 const VCAP=VJ.id.map((_,v)=>VJ.capKg&&+VJ.capKg[v]>0?+VJ.capKg[v]:0);   // capacidad del camión (kg) según la Placa del Resumen
 const VEXT=VJ.id.map((_,v)=>/extern/i.test(VJ.cfTipo[v]||'')?1:0);
@@ -192,7 +192,7 @@ for(let i=0;i<N;i++){const v=L.v[i],cap=VCAP[v];if(!(cap>0))continue;CAPL[i]=TKG
 
 /* Prorrateo: peso cobrable = max(kg real, m³ × factor). Peso del reparto = peso cobrable × km del cliente
    (sin km -> km promedio del viaje; viaje sin km -> km promedio global).
-   El Costo Benchmark de cada viaje (externo o flota propia) se reparte entre las líneas del viaje según ese peso. */
+   El Costo de transporte de cada viaje se reparte entre las líneas del viaje según ese peso. */
 function computeCost(){
   const num=new Float64Array(NV),den=new Float64Array(NV),ws=new Float64Array(NV);
   let gn=0,gd=0;
@@ -276,7 +276,7 @@ addMetric({id:'m3km',label:'m³·km',get:g=>g.kmm3,fmt:v=>fmtN(v,0)});
 addMetric({id:'kmprom',label:'Km prom. ponderado por kg',get:g=>g.kg>0?g.kmkg/g.kg:NaN,fmt:v=>fmtN(v,1),nonadd:true});
 addMetric({id:'kmmax',label:'Km máx.',get:g=>g.kmMax>=0?g.kmMax:NaN,fmt:v=>fmtN(v,1),nonadd:true});
 addMetric({id:'dens',label:'Densidad (kg/m³)',get:g=>g.m3>0?g.kg/g.m3:NaN,fmt:v=>fmtN(v,0),nonadd:true});
-addMetric({id:'cf',label:'Costo benchmark (₡)',get:g=>g.cf,fmt:v=>fmtN(v,0)});
+addMetric({id:'cf',label:'Costo de transporte (₡)',get:g=>g.cf,fmt:v=>fmtN(v,0)});
 addMetric({id:'cap',label:'Capacidad camión (kg)',get:g=>g.cap,fmt:v=>fmtN(v,0)});
 addMetric({id:'occ',label:'% ocupación real',get:g=>g.cap>0?g.kgCap/g.cap:NaN,fmt:v=>pct(v),nonadd:true});
 addMetric({id:'cob',label:'Peso cobrable (kg)',get:g=>g.cob,fmt:v=>fmtN(v,0)});
@@ -389,16 +389,11 @@ let CUR='red';
 
 /* ---- Rutas y costos: vista única jerárquica ---- */
 const HIER={
-  viaje:{label:'Viaje › Zona › Cliente › Artículo (SKU)',levels:['viaje','zonaNom','cliente','articulo']},
-  zona:{label:'Zona › Cliente › Viaje › Artículo',levels:['zonaNom','cliente','viaje','articulo']},
-  zonaviaje:{label:'Zona › Viaje › Cliente › Artículo',levels:['zonaNom','viaje','cliente','articulo']},
-  region:{label:'Región › Zona › Cliente › Artículo',levels:['region','zonaNom','cliente','articulo']},
-  ruta:{label:'Ruta del Resumen › Viaje › Cliente › Artículo',levels:['zonaResumen','viaje','cliente','articulo']},
-  tipo:{label:'Tipo › Transportista › Viaje › Cliente › Artículo',levels:['tipo','transportista','viaje','cliente','articulo']},
+  viaje:{label:'Viaje › Cliente › Artículo (SKU)',levels:['viaje','cliente','articulo']},
+  cliente:{label:'Cliente › Viaje › Artículo (SKU)',levels:['cliente','viaje','articulo']},
+  articulo:{label:'Artículo (SKU) › Cliente › Viaje',levels:['articulo','cliente','viaje']},
   bdf:{label:'BDF › Artículo › Cliente',levels:['bdf','articulo','cliente']},
-  zonabdf:{label:'Zona › BDF › Artículo › Cliente',levels:['zonaNom','bdf','articulo','cliente']},
-  cliente:{label:'Cliente › Artículo › Viaje',levels:['cliente','articulo','viaje']},
-  articulo:{label:'Artículo › Cliente',levels:['articulo','cliente']},
+  region:{label:'Región › Cliente › Artículo',levels:['region','cliente','articulo']},
   prov:{label:'Provincia › Cantón › Cliente › Artículo',levels:['provincia','canton','cliente','articulo']}};
 const TR={h:'viaje',open:new Set(),sort:'nombre',dir:-1,more:{}};   // por defecto: viajes en orden de número
 const TCOLS=[
@@ -407,31 +402,31 @@ const TCOLS=[
   {k:'base',l:'% líneas por volumen',f:g=>g.lines?g.volLines/g.lines:NaN,pct:1},
   {k:'km',l:'Km prom.',f:g=>g.cob>0?g.wk/g.cob:NaN,d:1},
   {k:'cap',l:'Capacidad kg',f:g=>g.cap>0?g.cap:NaN,d:0},{k:'occ',l:'% ocupación',f:g=>g.cap>0?g.kgCap/g.cap:NaN,pct:1},
-  {k:'cf',l:'Costo benchmark ₡',f:g=>g.cf,d:0,b:1},{k:'ckg',l:'₡ / kg cobrable',f:g=>g.cobC>0?g.cf/g.cobC:NaN,d:2},
+  {k:'cf',l:'Costo de transporte ₡',f:g=>g.cf,d:0,b:1},{k:'ckg',l:'₡ / kg cobrable',f:g=>g.cobC>0?g.cf/g.cobC:NaN,d:2},
   {k:'cu',l:'₡ / unidad',f:g=>g.u>0?g.cf/g.u:NaN,d:2},{k:'part',l:'% del costo',f:(g,p)=>p&&p.cf>0?g.cf/p.cf:NaN,pct:1}];
 const capTxt=v=>VCAP[v]>0?fmtN(VCAP[v]/1000,VCAP[v]%1000?2:0)+' t':'';
 function nodeLabel(dim,g){
-  if(dim==='viaje'){const v=CAT2VJ[g.key];const pl=VJ.cfPlaca[v]||'';return `Viaje ${g.label} · ${VJ.ini[v]?VJ.ini[v].slice(0,10):''}${pl?' · placa '+pl:''}${VCAP[v]?' · '+capTxt(v):''}${VJ.cfTipo[v]?' · '+VJ.cfTipo[v]:''}`}
+  if(dim==='viaje'){const v=CAT2VJ[g.key];const pl=VJ.cfPlaca[v]||'';return `Viaje ${g.label} · ${VJ.ini[v]?VJ.ini[v].slice(0,10):''}${pl?' · placa '+pl:''}${VCAP[v]?' · '+capTxt(v):''}`}
   if(dim==='ruta')return g.label==='Sin ruta'?g.label:'Ruta '+g.label;
   return g.label;
 }
-/* conteo de viajes del filtro: con benchmark, sin benchmark, fuera del Resumen y con capacidad */
+/* conteo de viajes del filtro: con costo de transporte, sin costo de transporte, fuera del Resumen y con capacidad */
 function vjCount(t){const o={con:0,sinB:0,sinR:0,cap:0};t.viajes.forEach(v=>{if(VJ.conCosto[v])o.con++;else{o.sinB++;if(VJ.enResumen&&!VJ.enResumen[v])o.sinR++}if(VCAP[v]>0)o.cap++});return o}
 addView({id:'red',title:'Rutas y costos',render(host){
   const t=total(FILT),vjC=vjCount(t);
   host.innerHTML=`<div class="grid kpis">
-    ${kpi('Costo benchmark','₡ '+fmtN(t.cf,0),fmtN(vjC.con)+' de '+fmtN(t.viajes.size)+' viajes con benchmark')}
+    ${kpi('Costo de transporte','₡ '+fmtN(t.cf,0),fmtN(vjC.con)+' de '+fmtN(t.viajes.size)+' viajes con costo de transporte')}
     ${kpi('Peso real / cobrable',fmtN(t.kg/1000,1)+' / '+fmtN(t.cob/1000,1)+' t','cobrable = máx(kg, m³×'+fmtN(PAR.fvol)+')')}
     ${kpi('Ocupación real',pct(t.cap>0?t.kgCap/t.cap:NaN),t.cap>0?fmtN(t.kgCap/1000,1)+' t de '+fmtN(t.cap/1000,1)+' t · '+fmtN(vjC.cap)+' viajes con capacidad':'sin viajes con capacidad')}
     ${kpi('₡ / kg cobrable','₡ '+fmtN(t.cobC>0?t.cf/t.cobC:NaN,2),'₡ / kg real '+fmtN(t.kgC>0?t.cf/t.kgC:NaN,2))}
     ${kpi('₡ / ton·km','₡ '+fmtN(t.kmkgC>0?t.cf/(t.kmkgC/1000):NaN,0))}
     ${kpi('Viajes',fmtN(t.viajes.size),'peso con costo '+pct(t.kg?t.kgC/t.kg:NaN))}
     ${kpi('Clientes · Artículos',fmtN(t.clientes.size)+' · '+fmtN(t.arts.size))}</div>
-  ${vjC.sinB?`<div class="warn">${fmtN(vjC.sinB)} viaje(s) sin <b>Costo Benchmark</b> en el Resumen de rutas no reciben costo${vjC.sinR?` (${fmtN(vjC.sinR)} ni siquiera están en el Resumen)`:''}. Filtra <i>Viaje con costo = Sin costo</i> para verlos.</div>`:''}
+  ${vjC.sinB?`<div class="warn">${fmtN(vjC.sinB)} viaje(s) sin <b>Costo de transporte</b> en el Resumen de rutas no reciben costo${vjC.sinR?` (${fmtN(vjC.sinR)} ni siquiera están en el Resumen)`:''}. Filtra <i>Viaje con costo = Sin costo</i> para verlos.</div>`:''}
   ${t.viajes.size&&vjC.cap<t.viajes.size?`<div class="note">${fmtN(t.viajes.size-vjC.cap)} viaje(s) sin capacidad: el Resumen de rutas no trae <b>Placa</b> o la placa no está en la hoja <i>Info camión</i>. La ocupación se calcula solo con los ${fmtN(vjC.cap)} viajes con capacidad.</div>`:''}
   <details class="card" id="metodo" style="margin-top:12px" ${TR.met?'open':''}><summary style="cursor:pointer;font-weight:700;color:var(--teal)">¿Cómo se calcula y distribuye el costo? (referencia)</summary>
    <div style="margin-top:10px;font-size:13px;line-height:1.6">
-   <p><b>1. Costo de cada viaje = Costo Benchmark.</b> Se toma la columna <i>Costo Benchmark</i> del <i>${esc(META.fuenteCosto)}</i> y se cruza por <b>Viaje WMS = N° viaje</b>. Si un viaje tiene varias filas (zonas o guías) se suman. Es el único costo del tablero, igual para viajes externos y de flota propia; el <i>Costo flete ₡</i> del archivo queda guardado pero no se usa. Un viaje sin Costo Benchmark no recibe costo.</p>
+   <p><b>1. Costo de cada viaje = Costo de transporte.</b> Se toma la columna <i>Costo Benchmark</i> (en el tablero se llama <b>Costo de transporte</b>) del <i>${esc(META.fuenteCosto)}</i> y se cruza por <b>Viaje WMS = N° viaje</b>. Si un viaje tiene varias filas (zonas o guías) se suman. Es el único costo del tablero; el <i>Costo flete ₡</i> del archivo queda guardado pero no se usa. Un viaje sin Costo de transporte no recibe costo.</p>
    <p><b>Ocupación real del viaje</b> = peso real total del viaje (kg) ÷ capacidad del camión (kg). La capacidad sale de la hoja <i>Info camión</i> del mismo archivo, por la <b>Placa</b> del Resumen de rutas (1 t = 1 000 kg; "2,5 tn" = 2 500 kg; "500KG" = 500 kg). Si el viaje usa varias placas se suma la capacidad de cada camión. En un grupo (zona, cliente, día…) la ocupación es Σ kg ÷ Σ capacidad asignada, donde cada línea recibe capacidad en proporción a su peso real: equivale al promedio de sus viajes ponderado por kg. Viajes sin placa o con placa fuera de la hoja no entran en la ocupación.</p>
    <p><b>2. Peso cobrable de cada línea</b> (artículo × cliente × viaje):
      <br><code>peso cobrable = máx( peso real kg , volumen m³ × ${fmtN(PAR.fvol)} )</code>
@@ -440,10 +435,10 @@ addView({id:'red',title:'Rutas y costos',render(host){
      <br>Cliente sin coordenadas → km estimado por el cantón de su código. Si aún no hay km → km promedio ponderado del viaje (o el promedio global).</p>
    <p><b>4. Peso de reparto</b> de la línea: <code>w = peso cobrable × km</code> (kg·km cobrables).</p>
    <p><b>5. Costo asignado a la línea</b>
-     <br><code>costo línea = Costo Benchmark del viaje × w ÷ Σ w de las líneas del viaje</code>
+     <br><code>costo línea = Costo de transporte del viaje × w ÷ Σ w de las líneas del viaje</code>
      <br>Si un viaje no tiene peso ni volumen, se reparte por unidades.</p>
    <p><b>6. Agregación.</b> Zona, cliente, viaje, artículo o BDF = suma de sus líneas, por eso todos los niveles cuadran con el total. <code>₡/kg cobrable = costo ÷ peso cobrable</code> (solo viajes con costo); <code>₡/ton·km = costo ÷ (kg real × km ÷ 1000)</code>.</p>
-   <p><b>Ejemplo.</b> Viaje con Costo Benchmark de ₡ 100 000 con dos clientes: A lleva 200 kg y 0,3 m³ a 20 km → cobrable máx(200, 0,3×${fmtN(PAR.fvol)}=${fmtN(0.3*PAR.fvol)}) = ${fmtN(Math.max(200,0.3*PAR.fvol))} kg → w = ${fmtN(Math.max(200,0.3*PAR.fvol)*20)}. B lleva 50 kg y 1,2 m³ a 60 km → cobrable ${fmtN(Math.max(50,1.2*PAR.fvol))} kg → w = ${fmtN(Math.max(50,1.2*PAR.fvol)*60)}. A paga ₡ ${fmtN(100000*Math.max(200,0.3*PAR.fvol)*20/(Math.max(200,0.3*PAR.fvol)*20+Math.max(50,1.2*PAR.fvol)*60))} y B ₡ ${fmtN(100000*Math.max(50,1.2*PAR.fvol)*60/(Math.max(200,0.3*PAR.fvol)*20+Math.max(50,1.2*PAR.fvol)*60))}.</p>
+   <p><b>Ejemplo.</b> Viaje con Costo de transporte de ₡ 100 000 con dos clientes: A lleva 200 kg y 0,3 m³ a 20 km → cobrable máx(200, 0,3×${fmtN(PAR.fvol)}=${fmtN(0.3*PAR.fvol)}) = ${fmtN(Math.max(200,0.3*PAR.fvol))} kg → w = ${fmtN(Math.max(200,0.3*PAR.fvol)*20)}. B lleva 50 kg y 1,2 m³ a 60 km → cobrable ${fmtN(Math.max(50,1.2*PAR.fvol))} kg → w = ${fmtN(Math.max(50,1.2*PAR.fvol)*60)}. A paga ₡ ${fmtN(100000*Math.max(200,0.3*PAR.fvol)*20/(Math.max(200,0.3*PAR.fvol)*20+Math.max(50,1.2*PAR.fvol)*60))} y B ₡ ${fmtN(100000*Math.max(50,1.2*PAR.fvol)*60/(Math.max(200,0.3*PAR.fvol)*20+Math.max(50,1.2*PAR.fvol)*60))}.</p>
    <p style="color:var(--text3)">Supuestos: el factor ${META.factor} y el factor ${fmtN(PAR.fvol)} kg/m³ no son mediciones; los pesos/volúmenes con confianza baja son estimados por familia. La secuencia real de entrega no se conoce.</p>
    </div></details>
   <div class="tools" style="margin-top:12px"><div class="field"><label>Jerarquía</label><select id="th">${Object.entries(HIER).map(([k,h])=>`<option value="${k}" ${TR.h===k?'selected':''}>${esc(h.label)}</option>`).join('')}</select></div>
@@ -487,7 +482,7 @@ addView({id:'resumen',title:'Resumen',render(host){
    ${kpi('Viajes',fmtN(t.viajes.size))}${kpi('Expediciones',fmtN(t.exps.size))}${kpi('Clientes',fmtN(t.clientes.size))}${kpi('Artículos',fmtN(t.arts.size))}
    ${kpi('Unidades',fmtN(t.u))}${kpi('Peso',fmtN(t.kg/1000,1)+' t',fmtN(t.kg)+' kg')}${kpi('Volumen',fmtN(t.m3,1)+' m³','Densidad '+fmtN(t.m3>0?t.kg/t.m3:NaN)+' kg/m³')}
    ${kpi('Ton·km',fmtN(t.kmkg/1000,0),'Km prom. ponderado '+fmtN(t.kg>0?t.kmkg/t.kg:NaN,1))}${kpi('Líneas con km',pct(FILT.length?conKm/FILT.length:NaN),'cliente con distancia')}
-   ${kpi('Costo benchmark','₡ '+fmtN(t.cf,0))}${kpi('Ocupación real',pct(t.cap>0?t.kgCap/t.cap:NaN),t.cap>0?'peso real ÷ capacidad camión':'sin capacidad')}${kpi('₡ / kg cobrable','₡ '+fmtN(t.cobC>0?t.cf/t.cobC:NaN,2),'₡/kg real '+fmtN(t.kgC>0?t.cf/t.kgC:NaN,2))}${kpi('Costo / ton·km','₡ '+fmtN(t.kmkgC>0?t.cf/(t.kmkgC/1000):NaN,0))}${kpi('Costo / m³','₡ '+fmtN(t.m3C>0?t.cf/t.m3C:NaN,0))}</div>
+   ${kpi('Costo de transporte','₡ '+fmtN(t.cf,0))}${kpi('Ocupación real',pct(t.cap>0?t.kgCap/t.cap:NaN),t.cap>0?'peso real ÷ capacidad camión':'sin capacidad')}${kpi('₡ / kg cobrable','₡ '+fmtN(t.cobC>0?t.cf/t.cobC:NaN,2),'₡/kg real '+fmtN(t.kgC>0?t.cf/t.kgC:NaN,2))}${kpi('Costo / ton·km','₡ '+fmtN(t.kmkgC>0?t.cf/(t.kmkgC/1000):NaN,0))}${kpi('Costo / m³','₡ '+fmtN(t.m3C>0?t.cf/t.m3C:NaN,0))}</div>
   <div class="tools" style="margin-top:14px"><div class="field"><label>Métrica de los gráficos</label><select id="rm">${['kg','m3','u','tkm','viajes','cf'].map(id=>`<option value="${id}">${MET(id).label}</option>`).join('')}</select></div></div>
   <div class="grid cols2"><div class="card"><h3>Por día</h3><div id="g1"></div></div><div class="card"><h3>Por rango de distancia</h3><div id="g2"></div></div>
   <div class="card"><h3>Top 10 rutas</h3><div id="g3"></div></div><div class="card"><h3>Top 10 clientes</h3><div id="g4"></div></div>
@@ -523,17 +518,17 @@ const BDF_COLS=[
   {k:'tkm',l:'Ton·km',f:g=>g.kmkg/1000,d:0},{k:'kmp',l:'Km prom. pond.',f:g=>g.kg>0?g.kmkg/g.kg:NaN,d:1},
   {k:'conkm',l:'% líneas con km',f:g=>g.lines?g.lk/g.lines:NaN,pct:1},
   {k:'occ',l:'% ocupación',f:g=>g.cap>0?g.kgCap/g.cap:NaN,pct:1},
-  {k:'cf',l:'Costo benchmark ₡',f:g=>g.cf,d:0,b:1},{k:'pc',l:'% del costo',f:(g,t)=>t.cf>0?g.cf/t.cf:NaN,pct:1},
+  {k:'cf',l:'Costo de transporte ₡',f:g=>g.cf,d:0,b:1},{k:'pc',l:'% del costo',f:(g,t)=>t.cf>0?g.cf/t.cf:NaN,pct:1},
   {k:'pk',l:'% del peso',f:(g,t)=>t.kg>0?g.kg/t.kg:NaN,pct:1},
   {k:'ckgc',l:'₡/kg cobrable',f:g=>g.cobC>0?g.cf/g.cobC:NaN,d:2},{k:'ckg',l:'₡/kg real',f:g=>g.kgC>0?g.cf/g.kgC:NaN,d:2},
   {k:'ctkm',l:'₡/ton·km',f:g=>g.kmkgC>0?g.cf/(g.kmkgC/1000):NaN,d:0},{k:'cm3',l:'₡/m³',f:g=>g.m3C>0?g.cf/g.m3C:NaN,d:0},
   {k:'cu',l:'₡/unidad',f:g=>g.u>0?g.cf/g.u:NaN,d:2},{k:'ccl',l:'₡/cliente',f:g=>g.clientes.size?g.cf/g.clientes.size:NaN,d:0}];
 /* Interpretación: ₡/kg cobrable = km promedio × tarifa (₡ por kg cobrable·km). Así se separa
-   "va más lejos" de "viaja en viajes más caros por kg·km" (poca carga en el viaje, externo vs propia). */
+   "va más lejos" de "viaja en viajes más caros por kg·km" (poca carga en el viaje). */
 function interpBDF(rows,T){
   const m=g=>({cf:g.cf,pc:T.cf>0?g.cf/T.cf:0,pcob:T.cob>0?g.cob/T.cob:0,pkg:T.kg>0?g.kg/T.kg:0,
     ckg:g.cobC>0?g.cf/g.cobC:NaN,km:g.cobC>0?g.wkC/g.cobC:NaN,tar:g.wkC>0?g.cf/g.wkC:NaN,
-    vol:g.lines?g.volLines/g.lines:NaN,ext:g.cf>0?g.cfE/g.cf:NaN,cl:g.clientes.size,cob:g.cob,kg:g.kg,
+    vol:g.lines?g.volLines/g.lines:NaN,cl:g.clientes.size,cob:g.cob,kg:g.kg,
     ccl:g.clientes.size?g.cf/g.clientes.size:NaN,upl:g.lines?g.u/g.lines:NaN});
   const t=m(T);const dif=(a,b)=>b>0&&a===a?(a/b-1):NaN;
   const sg=(x,mas,menos)=>!(x===x)?'':(x>=0?mas:menos);
@@ -541,7 +536,7 @@ function interpBDF(rows,T){
   const why=(g,M)=>{const r=[];const dk=dif(M.km,t.km),dt=dif(M.tar,t.tar),dv=(M.vol-t.vol);
     const main=Math.abs(Math.log(1+(dk||0)))>=Math.abs(Math.log(1+(dt||0)))?'km':'tar';
     r.push(`sus clientes están en promedio a <b>${fmtN(M.km,0)} km</b> (${pp(dk)} vs promedio ${fmtN(t.km,0)} km)`);
-    r.push(`viaja en viajes con tarifa de <b>₡ ${fmtN(M.tar,3)} por kg·km</b> (${pp(dt)} vs ₡ ${fmtN(t.tar,3)})${dt>0.1?(M.ext>t.ext+0.05?`: más de su costo va en viajes externos (${fmtN(M.ext*100,0)}% vs ${fmtN(t.ext*100,0)}%), con benchmark más alto por kg·km`:': va en viajes con menos carga total, donde el costo fijo del viaje se reparte entre menos kilos'):dt<-0.1?(M.ext<t.ext-0.05?`: viaja más en flota propia (externo ${fmtN(M.ext*100,0)}% vs ${fmtN(t.ext*100,0)}%)`:': va en viajes más llenos, donde el costo del viaje se diluye entre más kilos'):''}`);
+    r.push(`viaja en viajes con tarifa de <b>₡ ${fmtN(M.tar,3)} por kg·km</b> (${pp(dt)} vs ₡ ${fmtN(t.tar,3)})${dt>0.1?': va en viajes con menos carga total, donde el costo fijo del viaje se reparte entre menos kilos':dt<-0.1?': va en viajes más llenos, donde el costo del viaje se diluye entre más kilos':''}`);
     r.push(`${fmtN(M.vol*100,0)}% de sus líneas cobra por volumen (promedio ${fmtN(t.vol*100,0)}%)${dv>0.08?': son artículos voluminosos y pagan por el espacio que ocupan':dv<-0.08?': son artículos densos, pagan por peso real':''}`);
     return {txt:r,main};};
   const get=c=>rows.find(g=>g.label.startsWith('('+c+')'));
@@ -560,14 +555,14 @@ function interpBDF(rows,T){
   if(nb&&nb.cobC>0){const M=m(nb);html+=`<p><b>Artículos fuera del BDF:</b> ₡ ${fmtN(M.ckg,2)}/kg porque son pocos kilos (${fmtN(nb.kg,0)} kg) en ${fmtN(nb.viajes.size)} viajes; cualquier costo asignado pesa mucho por kilo. Conviene revisar si deben estar en el BDF.</p>`;}
   const dec=rows.map(g=>[g,m(g)]);
   return `<div class="card pb" style="margin-top:14px;break-inside:auto"><h3>Interpretación de la distribución del costo</h3><div style="font-size:12.5px;line-height:1.55">${html||'<p>Sin datos suficientes con los filtros actuales.</p>'}</div>
-   <div class="tablewrap" style="max-height:none;margin-top:6px"><table><thead><tr><th>BDF</th><th class="num">% del costo</th><th class="num">% peso cobrable</th><th class="num">% peso real</th><th class="num">Km prom. (cobrable)</th><th class="num">Tarifa ₡/kg·km</th><th class="num">₡/kg cobrable</th><th class="num">% líneas por volumen</th><th class="num">% costo en viajes externos</th><th class="num">Clientes</th><th class="num">₡/cliente</th></tr></thead><tbody>
-   ${dec.map(([g,M])=>`<tr><td>${esc(g.label)}</td><td class="num">${pct(M.pc)}</td><td class="num">${pct(M.pcob)}</td><td class="num">${pct(M.pkg)}</td><td class="num">${fmtN(M.km,1)}</td><td class="num">${fmtN(M.tar,3)}</td><td class="num"><b>${fmtN(M.ckg,2)}</b></td><td class="num">${pct(M.vol)}</td><td class="num">${pct(M.ext)}</td><td class="num">${fmtN(M.cl)}</td><td class="num">${fmtN(M.ccl,0)}</td></tr>`).join('')}
-   <tr style="font-weight:700;background:var(--bg3)"><td>Total</td><td class="num">100%</td><td class="num">100%</td><td class="num">100%</td><td class="num">${fmtN(t.km,1)}</td><td class="num">${fmtN(t.tar,3)}</td><td class="num">${fmtN(t.ckg,2)}</td><td class="num">${pct(t.vol)}</td><td class="num">${pct(t.ext)}</td><td class="num">${fmtN(t.cl)}</td><td class="num">${fmtN(t.ccl,0)}</td></tr></tbody></table></div>
+   <div class="tablewrap" style="max-height:none;margin-top:6px"><table><thead><tr><th>BDF</th><th class="num">% del costo</th><th class="num">% peso cobrable</th><th class="num">% peso real</th><th class="num">Km prom. (cobrable)</th><th class="num">Tarifa ₡/kg·km</th><th class="num">₡/kg cobrable</th><th class="num">% líneas por volumen</th><th class="num">Clientes</th><th class="num">₡/cliente</th></tr></thead><tbody>
+   ${dec.map(([g,M])=>`<tr><td>${esc(g.label)}</td><td class="num">${pct(M.pc)}</td><td class="num">${pct(M.pcob)}</td><td class="num">${pct(M.pkg)}</td><td class="num">${fmtN(M.km,1)}</td><td class="num">${fmtN(M.tar,3)}</td><td class="num"><b>${fmtN(M.ckg,2)}</b></td><td class="num">${pct(M.vol)}</td><td class="num">${fmtN(M.cl)}</td><td class="num">${fmtN(M.ccl,0)}</td></tr>`).join('')}
+   <tr style="font-weight:700;background:var(--bg3)"><td>Total</td><td class="num">100%</td><td class="num">100%</td><td class="num">100%</td><td class="num">${fmtN(t.km,1)}</td><td class="num">${fmtN(t.tar,3)}</td><td class="num">${fmtN(t.ckg,2)}</td><td class="num">${pct(t.vol)}</td><td class="num">${fmtN(t.cl)}</td><td class="num">${fmtN(t.ccl,0)}</td></tr></tbody></table></div>
    <h3 style="margin-top:12px">Supuestos de la distribución</h3><ul style="margin:0 0 0 18px;font-size:12px;line-height:1.55">
     <li><b>Peso cobrable</b> = máx(peso real, m³ × ${fmtN(PAR.fvol)} kg/m³). El factor ${fmtN(PAR.fvol)} es un estándar de transporte terrestre, no una medición propia; con un factor menor, los artículos voluminosos pagan menos.</li>
     <li><b>Distancia</b> = km en línea recta desde el CD × ${META.factor} hasta el cliente (ida). No se conoce la secuencia real de entrega; un cliente al final de la ruta y otro en el camino pagan según su propia distancia.</li>
-    <li><b>Tarifa del viaje</b> (₡ por kg·km) = costo del viaje ÷ Σ(peso cobrable × km) de sus líneas. Viajes con poca carga o externos más caros elevan la tarifa de todo lo que llevan.</li>
-    <li><b>Costo Benchmark</b>: es el costo de referencia de cada viaje según el Resumen de rutas, el mismo criterio para viajes externos y de flota propia. Los viajes de flota propia se valoran al benchmark, no a su costo real de operación.</li>
+    <li><b>Tarifa del viaje</b> (₡ por kg·km) = costo del viaje ÷ Σ(peso cobrable × km) de sus líneas. Viajes con poca carga elevan la tarifa de todo lo que llevan.</li>
+    <li><b>Costo de transporte</b>: es el costo de referencia de cada viaje según el Resumen de rutas (costo de transporte del viaje).</li>
     <li><b>Viajes sin costo</b> en el Resumen de rutas no reciben costo; sus artículos se ven más baratos (no entran en ₡/kg cobrable).</li>
     <li><b>Pesos y volúmenes</b> con confianza baja (estimados por familia o similitud) y clientes con zona/km estimados por cantón pueden mover el reparto entre categorías.</li>
     <li><b>Clientes</b> = clientes distintos con despacho en la categoría; un cliente compra de varias categorías, por eso la suma por categoría supera el total.</li></ul></div>`;
@@ -591,17 +586,17 @@ addView({id:'bdf',title:'Resumen BDF',render(host){
     ...Object.entries(F.sets).filter(([id,st])=>st.size&&id!=='bdf'&&id!=='bdfGrupo').map(([id,st])=>DIMS[id].label+': '+[...st].slice(0,4).map(k=>DIMS[id].cats[k]).join(', ')+(st.size>4?' +'+(st.size-4):''))].filter(Boolean).join(' · ')||'Sin filtros (todo el período)';
   const logo=(document.querySelector('.logo img')||{}).src||'';
   host.innerHTML=`<div id="printHead"><img src="${logo}" alt="OLO"><div><h1>Resumen de transporte por BDF · Cofersa</h1>
-     <div class="meta">Período ${DAYS[0]} a ${DAYS[DAYS.length-1]} · ${esc(filtTxt)} · Costo = Costo Benchmark · Factor volumétrico ${fmtN(PAR.fvol)} kg/m³ · Distancia = línea recta × ${META.factor} · Generado ${new Date().toLocaleString('es-CR')}</div></div></div>
+     <div class="meta">Período ${DAYS[0]} a ${DAYS[DAYS.length-1]} · ${esc(filtTxt)} · Costo = Costo de transporte · Factor volumétrico ${fmtN(PAR.fvol)} kg/m³ · Distancia = línea recta × ${META.factor} · Generado ${new Date().toLocaleString('es-CR')}</div></div></div>
    <div class="tools no-print" style="justify-content:flex-end"><button class="btn" id="bdfPdf">Exportar PDF</button></div>
-   <div class="note">Todas las categorías del BDF (${esc('BDF al 6 de Noviembre.xlsx')}). Esta vista ignora el filtro de BDF para mostrar todas; ${nOtros?'sí aplica los otros '+nOtros+' filtros activos':'sin otros filtros activos'}. Costo Benchmark distribuido por peso cobrable × km.</div>
-   <div class="grid kpis">${kpi('Costo benchmark','₡ '+fmtN(T.cf,0))}${kpi('Ocupación real',pct(T.cap>0?T.kgCap/T.cap:NaN),'peso real ÷ capacidad camión')}${kpi('Peso',fmtN(T.kg/1000,1)+' t','cobrable '+fmtN(T.cob/1000,1)+' t')}${kpi('₡ / kg cobrable','₡ '+fmtN(T.cobC>0?T.cf/T.cobC:NaN,2))}${kpi('Clientes',fmtN(T.clientes.size),'distintos en el período')}${kpi('Categorías con despacho',fmtN(rows.filter(r=>r.label!=='No está en BDF').length))}${kpi('Artículos',fmtN(T.arts.size),'en BDF '+fmtN(rows.filter(r=>r.label!=='No está en BDF').reduce((a,r)=>a+r.arts.size,0)))}</div>
-   <div class="grid cols2" style="margin-top:14px"><div class="card"><h3>Costo benchmark por BDF (₡)</h3>${hbars(rows.map(g=>({label:g.label,value:g.cf})),v=>'₡ '+fmtN(v,0))}</div>
+   <div class="note">Todas las categorías del BDF (${esc('BDF al 6 de Noviembre.xlsx')}). Esta vista ignora el filtro de BDF para mostrar todas; ${nOtros?'sí aplica los otros '+nOtros+' filtros activos':'sin otros filtros activos'}. Costo de transporte distribuido por peso cobrable × km.</div>
+   <div class="grid kpis">${kpi('Costo de transporte','₡ '+fmtN(T.cf,0))}${kpi('Ocupación real',pct(T.cap>0?T.kgCap/T.cap:NaN),'peso real ÷ capacidad camión')}${kpi('Peso',fmtN(T.kg/1000,1)+' t','cobrable '+fmtN(T.cob/1000,1)+' t')}${kpi('₡ / kg cobrable','₡ '+fmtN(T.cobC>0?T.cf/T.cobC:NaN,2))}${kpi('Clientes',fmtN(T.clientes.size),'distintos en el período')}${kpi('Categorías con despacho',fmtN(rows.filter(r=>r.label!=='No está en BDF').length))}${kpi('Artículos',fmtN(T.arts.size),'en BDF '+fmtN(rows.filter(r=>r.label!=='No está en BDF').reduce((a,r)=>a+r.arts.size,0)))}</div>
+   <div class="grid cols2" style="margin-top:14px"><div class="card"><h3>Costo de transporte por BDF (₡)</h3>${hbars(rows.map(g=>({label:g.label,value:g.cf})),v=>'₡ '+fmtN(v,0))}</div>
     <div class="card"><h3>₡ / kg cobrable por BDF</h3>${hbars(rows.filter(g=>g.cobC>0).map(g=>({label:g.label,value:g.cf/g.cobC})),v=>'₡ '+fmtN(v,2))}</div>
     <div class="card"><h3>Cantidad de clientes por BDF</h3>${hbars(rows.map(g=>({label:g.label,value:g.clientes.size})),v=>fmtN(v,0)+' clientes')}</div>
     <div class="card"><h3>Costo promedio por cliente (₡)</h3>${hbars(rows.filter(g=>g.clientes.size).map(g=>({label:g.label,value:g.cf/g.clientes.size})),v=>'₡ '+fmtN(v,0))}</div></div>
    ${interpBDF(rows,T)}
    <div class="pb">${tbl('g','Por grupo BDF',grp)}</div>${tbl('b','Por categoría BDF',rows)}
-   <div class="note" style="margin-top:8px">Distribución del costo: Costo Benchmark del Resumen de rutas por viaje (externo y flota propia). Cada línea paga según peso cobrable (máx. kg real, m³ × ${fmtN(PAR.fvol)}) × km del cliente. Clientes = clientes distintos con despacho en la categoría (un cliente puede estar en varias).</div>`;
+   <div class="note" style="margin-top:8px">Distribución del costo: Costo de transporte del Resumen de rutas por viaje. Cada línea paga según peso cobrable (máx. kg real, m³ × ${fmtN(PAR.fvol)}) × km del cliente. Clientes = clientes distintos con despacho en la categoría (un cliente puede estar en varias).</div>`;
   host.querySelectorAll('tr.click').forEach(tr=>tr.onclick=()=>openDetail(tr.dataset.d,+tr.dataset.k));
   $('#bdfPdf').onclick=()=>{const t0=document.title;const d=new Date(),pd=n=>String(n).padStart(2,'0');
     document.title=`OLO-Resumen-BDF-transporte_${d.getFullYear()}${pd(d.getMonth()+1)}${pd(d.getDate())}`; // nombre sugerido del PDF
@@ -773,13 +768,13 @@ addView({id:'carga',title:'Cargar datos',render(host){
     box.innerHTML='Leyendo '+esc(f.name)+'…';
     try{const r=await leerArchivo(f,t);UP[t]=r;
       box.innerHTML=`<div class="kv" style="margin:6px 0"><div><b>Archivo</b>${esc(f.name)} · ${fmtN(f.size/1e6,1)} MB · hoja ${esc(r.hoja)}</div><div><b>Filas válidas</b>${fmtN(r.rows.length)} de ${fmtN(r.total)}</div>
-        <div><b>Rango</b>${esc(r.desde||'—')} → ${esc(r.hasta||'—')} (${r.dias} días)</div><div><b>Viajes</b>${fmtN(r.viajes)}</div>${t==='despachos'?`<div><b>Unidades</b>${fmtN(r.unidades)}</div>`:`<div><b>Costo Benchmark</b>₡ ${fmtN(r.costo,0)}${r.sinBench?` · <span style="color:var(--red)">${fmtN(r.sinBench)} filas sin benchmark</span>`:''}</div><div><b>Camiones (${esc(r.cam?r.cam.hoja:'Info camión')})</b>${r.cam?fmtN(r.camiones.length)+' placas con capacidad'+(r.cam.conflictos.length?` · ${r.cam.conflictos.length} placa(s) con capacidades distintas en la hoja (se usa la de flota propia): ${esc(r.cam.conflictos.slice(0,6).join(', '))}`:''):'<span style="color:var(--red)">no viene la hoja: se conserva la tabla de camiones actual</span>'}</div><div><b>Viajes con capacidad</b>${fmtN(r.viajesCap)} de ${fmtN(r.viajes)} (${fmtN(r.viajesPlaca)} traen Placa)</div>`}
+        <div><b>Rango</b>${esc(r.desde||'—')} → ${esc(r.hasta||'—')} (${r.dias} días)</div><div><b>Viajes</b>${fmtN(r.viajes)}</div>${t==='despachos'?`<div><b>Unidades</b>${fmtN(r.unidades)}</div>`:`<div><b>Costo de transporte</b>₡ ${fmtN(r.costo,0)}${r.sinBench?` · <span style="color:var(--red)">${fmtN(r.sinBench)} filas sin costo</span>`:''}</div><div><b>Camiones (${esc(r.cam?r.cam.hoja:'Info camión')})</b>${r.cam?fmtN(r.camiones.length)+' placas con capacidad'+(r.cam.conflictos.length?` · ${r.cam.conflictos.length} placa(s) con capacidades distintas en la hoja (se usa la de flota propia): ${esc(r.cam.conflictos.slice(0,6).join(', '))}`:''):'<span style="color:var(--red)">no viene la hoja: se conserva la tabla de camiones actual</span>'}</div><div><b>Viajes con capacidad</b>${fmtN(r.viajesCap)} de ${fmtN(r.viajes)} (${fmtN(r.viajesPlaca)} traen Placa)</div>`}
         <div><b>Omitidas</b>${t==='despachos'?`otras compañías ${fmtN(r.omit.otra)} · sin viaje ${fmtN(r.omit.sinViaje)} · sin fecha ${fmtN(r.omit.sinFecha)}`:`sin N° viaje ${fmtN(r.omit.sinViaje)}`}</div></div>
         <div class="note">${t==='despachos'?`Se reemplazarán en Supabase los despachos de los ${r.dias} día(s) del archivo.`:`Se reemplazarán los costos de los ${fmtN(r.viajes)} viajes del archivo${r.cam?' y la tabla de camiones completa':''}.`}</div>
         <button class="btn" data-go="${t}" ${r.rows.length?'':'disabled'}>Cargar a Supabase</button> <span data-pr="${t}" class="note"></span>`;
       box.querySelector('[data-go]').onclick=async e=>{const b=e.target,pr=box.querySelector('[data-pr]');b.disabled=true;
         try{const res=await API.subir(t,r,txt=>pr.textContent=txt);
-          pr.innerHTML='';box.insertAdjacentHTML('beforeend',`<div class="note" style="color:var(--green);font-weight:600">✓ Cargado: ${fmtN(res.filas)} filas${res.reemplazadas!=null?' · reemplazó '+fmtN(res.reemplazadas):''}${res.viajes!=null?' · '+fmtN(res.viajes)+' viajes':''}${res.clientes_sin_km?' · '+res.clientes_sin_km+' clientes sin km':''}${res.articulos_sin_peso?' · '+res.articulos_sin_peso+' artículos sin peso':''}${res.viajes_sin_costo?' · '+res.viajes_sin_costo+' viajes sin costo':''}${res.costo_benchmark!=null?' · benchmark ₡ '+fmtN(res.costo_benchmark,0):''}${res.filas_sin_benchmark?' · '+res.filas_sin_benchmark+' filas sin benchmark':''}${res.camiones!=null?' · '+fmtN(res.camiones)+' camiones':''}${res.viajes_con_capacidad!=null?' · '+fmtN(res.viajes_con_capacidad)+' viajes con capacidad':''}. <button class="btn sm" onclick="location.reload()">Actualizar tablero</button></div>`);pinta()}
+          pr.innerHTML='';box.insertAdjacentHTML('beforeend',`<div class="note" style="color:var(--green);font-weight:600">✓ Cargado: ${fmtN(res.filas)} filas${res.reemplazadas!=null?' · reemplazó '+fmtN(res.reemplazadas):''}${res.viajes!=null?' · '+fmtN(res.viajes)+' viajes':''}${res.clientes_sin_km?' · '+res.clientes_sin_km+' clientes sin km':''}${res.articulos_sin_peso?' · '+res.articulos_sin_peso+' artículos sin peso':''}${res.viajes_sin_costo?' · '+res.viajes_sin_costo+' viajes sin costo':''}${res.costo_benchmark!=null?' · costo de transporte ₡ '+fmtN(res.costo_benchmark,0):''}${res.filas_sin_benchmark?' · '+res.filas_sin_benchmark+' filas sin costo':''}${res.camiones!=null?' · '+fmtN(res.camiones)+' camiones':''}${res.viajes_con_capacidad!=null?' · '+fmtN(res.viajes_con_capacidad)+' viajes con capacidad':''}. <button class="btn sm" onclick="location.reload()">Actualizar tablero</button></div>`);pinta()}
         catch(err){pr.textContent='';box.insertAdjacentHTML('beforeend',`<div class="warn">No se cargó: ${esc(err.message)}</div>`);b.disabled=false;pinta()}};
     }catch(err){box.innerHTML=`<div class="warn">${esc(err.message)}</div>`}});
 }});
@@ -792,7 +787,7 @@ addView({id:'calidad',title:'Calidad de datos',render(host){
   const cg=groupBy('cliente',FILT).filter(g=>CL.kmRuta[CAT2CL[g.key]]==null).map(enrich);
   const ag=groupBy('articulo',FILT).filter(g=>AR.conf[CAT2AR[g.key]]==='baja').map(enrich);
   host.innerHTML=`<div class="grid kpis">${kpi('Líneas sin km de cliente',pct(FILT.length?sinKm/FILT.length:NaN),fmtN(sinKm)+' líneas')}${kpi('Líneas con peso/vol. confianza baja',pct(FILT.length?bajas/FILT.length:NaN),fmtN(bajas)+' líneas')}${kpi('Líneas sin peso o volumen',pct(FILT.length?sinPV/FILT.length:NaN),fmtN(sinPV)+' líneas')}${kpi('Kg en artículos de confianza baja',pct(t.kg?ag.reduce((a,g)=>a+g.kg,0)/t.kg:NaN),'del peso total')}</div>
-  <div class="warn">Distancia = línea recta × ${META.factor} (supuesto, no medición). Costo por cliente/artículo = prorrateo por peso cobrable (máx. kg real, m³ × ${fmtN(PAR.fvol)}) × km. El costo es el Costo Benchmark del Resumen de rutas. El peso/volumen de artículos de confianza baja se estimó por familia o similitud de descripción. EPA y otras compañías están fuera de este análisis.</div>
+  <div class="warn">Distancia = línea recta × ${META.factor} (supuesto, no medición). Costo por cliente/artículo = prorrateo por peso cobrable (máx. kg real, m³ × ${fmtN(PAR.fvol)}) × km. El costo es el Costo de transporte del Resumen de rutas. El peso/volumen de artículos de confianza baja se estimó por familia o similitud de descripción. EPA y otras compañías están fuera de este análisis.</div>
   <div class="grid cols2"><div><h3 style="margin:8px 0;font-size:13px">Clientes sin km (por peso)</h3><div id="q1"></div></div><div><h3 style="margin:8px 0;font-size:13px">Artículos con estimación de confianza baja (por volumen)</h3><div id="q2"></div></div></div>`;
   table($('#q1'),'q-clientes',[{k:'l',label:'Cliente',get:r=>r.label,trunc:true},{k:'cr',label:'Cruce',get:r=>CL.cruce[CAT2CL[r.key]],trunc:true},mcol('kg'),mcol('viajes')],cg,{sort:'kg',per:15,maxh:'420px'});
   table($('#q2'),'q-arts',[{k:'l',label:'Artículo',get:r=>r.label,trunc:true},mcol('u'),mcol('m3'),mcol('kg')],ag,{sort:'m3',per:15,maxh:'420px'});
@@ -802,13 +797,13 @@ addView({id:'calidad',title:'Calidad de datos',render(host){
 function openDetail(dimId,key){
   const D=DIMS[dimId],idx=subset(dimId,key,FILT),t=enrich(total(idx));
   let info='';
-  if(dimId==='viaje'){const v=CAT2VJ[key];info=[['Viaje WMS',VJ.id[v]],['Cargas (Número Viaje)',VJ.cargas[v]],['Inicio',VJ.ini[v]],['Fin',VJ.fin[v]],['Placa',VJ.placa[v]],['Transporte',VJ.trans[v]],['Conductor (cédula)',VJ.cond[v]],['Recurso',VJ.rec[v]],['Costo Benchmark ₡',VJ.conCosto[v]?fmtN(VCOSTO[v],0):'Sin benchmark'],['Placa (Resumen)',VJ.cfPlaca[v]],['Capacidad camión',VCAP[v]?fmtN(VCAP[v],0)+' kg':(VJ.sinCap&&VJ.sinCap[v]?'Placa sin capacidad en Info camión: '+VJ.sinCap[v]:'Sin placa en el Resumen')],['Peso real del viaje',fmtN(TKG[v],0)+' kg'],['% ocupación real',VCAP[v]?pct(TKG[v]/VCAP[v]):'—'],['Km real (odómetro)',fmtN(VJ.kmReal[v],0)],['Venta total ₡',fmtN(VJ.venta[v],0)],['% flete vs venta',VJ.venta[v]?pct(t.cf/VJ.venta[v]):'—'],['Fecha Resumen',VJ.cfFecha[v]],['Zona(s) Resumen',VJ.cfZona[v]],['Tipo',VJ.cfTipo[v]],['Transportista',VJ.cfTrans[v]],['Estado guía',VJ.cfEstado[v]],['Guía(s)',VJ.cfGuia[v]],['Alerta',VJ.cfAlerta[v]]]}
+  if(dimId==='viaje'){const v=CAT2VJ[key];info=[['Viaje WMS',VJ.id[v]],['Cargas (Número Viaje)',VJ.cargas[v]],['Inicio',VJ.ini[v]],['Fin',VJ.fin[v]],['Placa',VJ.placa[v]],['Transporte',VJ.trans[v]],['Conductor (cédula)',VJ.cond[v]],['Recurso',VJ.rec[v]],['Costo de transporte ₡',VJ.conCosto[v]?fmtN(VCOSTO[v],0):'Sin costo de transporte'],['Placa (Resumen)',VJ.cfPlaca[v]],['Capacidad camión',VCAP[v]?fmtN(VCAP[v],0)+' kg':(VJ.sinCap&&VJ.sinCap[v]?'Placa sin capacidad en Info camión: '+VJ.sinCap[v]:'Sin placa en el Resumen')],['Peso real del viaje',fmtN(TKG[v],0)+' kg'],['% ocupación real',VCAP[v]?pct(TKG[v]/VCAP[v]):'—'],['Km real (odómetro)',fmtN(VJ.kmReal[v],0)],['Venta total ₡',fmtN(VJ.venta[v],0)],['% flete vs venta',VJ.venta[v]?pct(t.cf/VJ.venta[v]):'—'],['Fecha Resumen',VJ.cfFecha[v]],['Zona(s) Resumen',VJ.cfZona[v]],['Tipo',VJ.cfTipo[v]],['Transportista',VJ.cfTrans[v]],['Estado guía',VJ.cfEstado[v]],['Guía(s)',VJ.cfGuia[v]],['Alerta',VJ.cfAlerta[v]]]}
   else if(dimId==='cliente'){const c=CAT2CL[key];info=[['Id',CL.id[c]],['Nombre',CL.nombre[c]],['Razón social',CL.rs[c]],['Agrupación',CL.agr[c]],['Vendedor',CL.vend[c]],['Ruta / Zona',(CL.ruta[c]||'—')+' / '+(CL.zona[c]||'—')],['Zona propuesta',CL.zonaProp[c]],['Provincia / Cantón',(CL.prov[c]||'—')+' / '+(CL.canton[c]||'—')],['Región',CL.region[c]],['Km línea recta',fmtN(CL.kmRecta[c],1)],['Km ruta (×'+META.factor+')',fmtN(CL.kmRuta[c],1)],['Estado geo',CL.geo[c]],['Zona',CL.zonaNom[c]],['Zona/km estimado',CL.zonaEst[c]||'No (dato del archivo)'],['Cruce',CL.cruce[c]]]}
   else if(dimId==='articulo'){const a=CAT2AR[key];info=[['Id',AR.id[a]],['Descripción',AR.desc[a]],['BDF',AR.bdf[a]],['Peso unit kg',fmtN(AR.kg[a],4)],['Vol unit m³',fmtN(AR.m3[a],6)],['Fuente peso',AR.fp[a]],['Fuente volumen',AR.fv[a]],['Confianza',AR.conf[a]]]}
   const subs=['viaje','cliente','articulo','dia'].filter(d=>d!==dimId);
   $('#mbody').innerHTML=`<h2 style="font-size:18px;margin-bottom:10px;color:var(--teal)">${esc(D.label)}: ${esc(D.cats[key])}</h2>
   ${info.length?`<div class="card kv" style="margin-bottom:12px">${info.map(([k,v])=>`<div><b>${esc(k)}</b>${esc(v==null||v===''?'—':v)}</div>`).join('')}</div>`:''}
-  <div class="grid kpis" style="margin-bottom:12px">${kpi('Peso',fmtN(t.kg)+' kg')}${kpi('Volumen',fmtN(t.m3,2)+' m³')}${kpi('Unidades',fmtN(t.u))}${kpi('Viajes',fmtN(t.viajes.size))}${kpi('Clientes',fmtN(t.clientes.size))}${kpi('Artículos',fmtN(t.arts.size))}${kpi('Ton·km',fmtN(t.kmkg/1000,1))}${kpi('Costo benchmark','₡ '+fmtN(t.cf,0))}${kpi('Ocupación real',pct(t.cap>0?t.kgCap/t.cap:NaN))}${kpi('Peso cobrable',fmtN(t.cob)+' kg')}${kpi('₡ / kg cobrable','₡ '+fmtN(t.cobC>0?t.cf/t.cobC:NaN,2))}</div>
+  <div class="grid kpis" style="margin-bottom:12px">${kpi('Peso',fmtN(t.kg)+' kg')}${kpi('Volumen',fmtN(t.m3,2)+' m³')}${kpi('Unidades',fmtN(t.u))}${kpi('Viajes',fmtN(t.viajes.size))}${kpi('Clientes',fmtN(t.clientes.size))}${kpi('Artículos',fmtN(t.arts.size))}${kpi('Ton·km',fmtN(t.kmkg/1000,1))}${kpi('Costo de transporte','₡ '+fmtN(t.cf,0))}${kpi('Ocupación real',pct(t.cap>0?t.kgCap/t.cap:NaN))}${kpi('Peso cobrable',fmtN(t.cob)+' kg')}${kpi('₡ / kg cobrable','₡ '+fmtN(t.cobC>0?t.cf/t.cobC:NaN,2))}</div>
   <div class="card" style="margin-bottom:12px"><h3>Por día</h3>${vbars(groupBy('dia',idx).sort((a,b)=>a.key-b.key).map(g=>({label:g.label,short:g.label.slice(8),value:g.kg})),v=>fmtN(v,0)+' kg',150)}</div>
   ${subs.filter(s=>s!=='dia').map(s=>`<div class="card" style="margin-bottom:12px"><h3>${esc(DIMS[s].label)}s</h3><div id="ms-${s}"></div></div>`).join('')}`;
   subs.filter(s=>s!=='dia').forEach(s=>{
@@ -901,7 +896,7 @@ function shareNow(){
   const file=typeof File==='function'?new File([blob],name,{type:'text/html'}):null;
   $('#mbody').innerHTML=`<h2 style="font-size:18px;color:var(--teal);margin-bottom:8px">Compartir tablero</h2>
    <p style="margin-bottom:10px">Se genera <b>un solo archivo HTML</b> (${fmtN(blob.size/1e6,1)} MB) con todos los datos, el logo y la lógica. Quien lo reciba solo tiene que abrirlo con doble clic en Chrome, Edge o Safari; no necesita internet ni instalar nada.</p>
-   <div class="card kv" style="margin-bottom:12px"><div><b>Factor volumétrico</b>${fmtN(PAR.fvol)} kg/m³</div><div><b>Costo</b>Costo Benchmark del Resumen de rutas</div><div><b>Filtros incluidos</b>${nf?fmtN(nf)+' activos':'ninguno'}</div><div><b>Abre en la pestaña</b>${esc((VIEWS.find(v=>v.id===CUR)||{}).title||'')}</div></div>
+   <div class="card kv" style="margin-bottom:12px"><div><b>Factor volumétrico</b>${fmtN(PAR.fvol)} kg/m³</div><div><b>Costo</b>Costo de transporte del Resumen de rutas</div><div><b>Filtros incluidos</b>${nf?fmtN(nf)+' activos':'ninguno'}</div><div><b>Abre en la pestaña</b>${esc((VIEWS.find(v=>v.id===CUR)||{}).title||'')}</div></div>
    <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" id="shDl">Descargar archivo</button>${file&&navigator.canShare&&navigator.canShare({files:[file]})?'<button class="btn ghost" id="shSys">Enviar (correo, AirDrop, Teams…)</button>':''}</div>
    <p class="note" style="margin-top:10px">Para varias personas: envíalo por correo o súbelo a OneDrive, SharePoint o Google Drive y comparte el enlace (en Drive/SharePoint deben descargarlo y abrirlo; la vista previa web no ejecuta el tablero). Cada persona puede cambiar filtros y parámetros en su copia sin afectar a las demás.</p>`;
   $('#modal').classList.add('on');
