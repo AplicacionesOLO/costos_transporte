@@ -163,14 +163,15 @@ const pct=v=>v==null||!isFinite(v)?'—':fmtN(v*100,1)+'%';
 
 /* líneas: kg, m3, km por línea */
 const KG=new Float64Array(N),M3=new Float64Array(N),KM=new Float64Array(N),Q=Float64Array.from(L.q);
-const COB=new Float64Array(N),WK=new Float64Array(N),CF=new Float64Array(N),CAPL=new Float64Array(N);
+const COB=new Float64Array(N),WK=new Float64Array(N),CF=new Float64Array(N),CAPL=new Float64Array(N),CAPLM3=new Float64Array(N);
 const HASC=Uint8Array.from(L.v.map(v=>VJ.conCosto[v]?1:0));
 const NV=VJ.id.length;
 /* Costo de cada viaje = Costo de transporte del Resumen de rutas (único costo del tablero; se suma si el viaje tiene varias filas) */
 const VCOSTO=VJ.id.map((_,v)=>VJ.costo&&VJ.costo[v]!=null?+VJ.costo[v]||0:0);
 const VCAP=VJ.id.map((_,v)=>VJ.capKg&&+VJ.capKg[v]>0?+VJ.capKg[v]:0);   // capacidad del camión (kg) según la Placa del Resumen
+const VCAPM3=VJ.id.map((_,v)=>VJ.capM3&&+VJ.capM3[v]>0?+VJ.capM3[v]:0);   // capacidad volumétrica del camión (m³) según la Placa
 const VEXT=VJ.id.map((_,v)=>/extern/i.test(VJ.cfTipo[v]||'')?1:0);
-const TKG=new Float64Array(NV),TLN=new Float64Array(NV);   // peso real total y líneas de cada viaje (todo el mes, sin filtros)
+const TM3=new Float64Array(NV),TKG=new Float64Array(NV),TLN=new Float64Array(NV);   // peso real total y líneas de cada viaje (todo el mes, sin filtros)
 /* parámetros (editables y guardados en el navegador) */
 const PAR={fvol:META.factorVol||333};
 /* Prioridad: 1) cambios guardados en ESTA copia (clave única por copia) 2) valores incluidos en el archivo 3) valores por defecto.
@@ -183,12 +184,12 @@ for(let i=0;i<N;i++){
   const a=L.a[i],c=L.c[i];
   KG[i]=Q[i]*(AR.kg[a]||0); M3[i]=Q[i]*(AR.m3[a]||0);
   const k=CL.kmRuta[c]; KM[i]=k==null?NaN:k;
-  TKG[L.v[i]]+=KG[i];TLN[L.v[i]]++;
+  TKG[L.v[i]]+=KG[i];TM3[L.v[i]]+=M3[i];TLN[L.v[i]]++;
 }
 /* Ocupación: % ocupación del viaje = peso real total del viaje ÷ capacidad del camión.
    Cada línea recibe una parte de la capacidad proporcional a su peso real (CAPL), así cualquier grupo
    (zona, cliente, día…) muestra Σ kg ÷ Σ capacidad asignada = promedio de sus viajes ponderado por kg. */
-for(let i=0;i<N;i++){const v=L.v[i],cap=VCAP[v];if(!(cap>0))continue;CAPL[i]=TKG[v]>0?cap*KG[i]/TKG[v]:cap/TLN[v]}
+for(let i=0;i<N;i++){const v=L.v[i],cap=VCAP[v];if(cap>0)CAPL[i]=TKG[v]>0?cap*KG[i]/TKG[v]:cap/TLN[v];const cm=VCAPM3[v];if(cm>0)CAPLM3[i]=TM3[v]>0?cm*M3[i]/TM3[v]:cm/TLN[v]}
 
 /* Prorrateo: peso cobrable = max(kg real, m³ × factor). Peso del reparto = peso cobrable × km del cliente
    (sin km -> km promedio del viaje; viaje sin km -> km promedio global).
@@ -278,6 +279,8 @@ addMetric({id:'kmmax',label:'Km máx.',get:g=>g.kmMax>=0?g.kmMax:NaN,fmt:v=>fmtN
 addMetric({id:'dens',label:'Densidad (kg/m³)',get:g=>g.m3>0?g.kg/g.m3:NaN,fmt:v=>fmtN(v,0),nonadd:true});
 addMetric({id:'cf',label:'Costo de transporte (₡)',get:g=>g.cf,fmt:v=>fmtN(v,0)});
 addMetric({id:'cap',label:'Capacidad camión (kg)',get:g=>g.cap,fmt:v=>fmtN(v,0)});
+addMetric({id:'capm3',label:'Capacidad camión (m³)',get:g=>g.capM3,fmt:v=>fmtN(v,1)});
+addMetric({id:'occm3',label:'% ocupación por volumen',get:g=>g.capM3>0?g.m3Cap/g.capM3:NaN,fmt:v=>pct(v),nonadd:true});
 addMetric({id:'occ',label:'% ocupación real',get:g=>g.cap>0?g.kgCap/g.cap:NaN,fmt:v=>pct(v),nonadd:true});
 addMetric({id:'cob',label:'Peso cobrable (kg)',get:g=>g.cob,fmt:v=>fmtN(v,0)});
 addMetric({id:'ckg',label:'Costo / kg real (₡)',get:g=>g.kgC>0?g.cf/g.kgC:NaN,fmt:v=>fmtN(v,2),nonadd:true});
@@ -315,13 +318,14 @@ function applyFilters(){
 
 /* ============================ AGREGACIÓN ============================ */
 function newAgg(label,key,sets){
-  const g={label,key,kg:0,m3:0,u:0,lines:0,kmkg:0,kmm3:0,kmMax:-1,cf:0,cfE:0,cob:0,cobC:0,wk:0,wkC:0,kgC:0,m3C:0,kmkgC:0,volLines:0,cap:0,kgCap:0};
+  const g={label,key,kg:0,m3:0,u:0,lines:0,kmkg:0,kmm3:0,kmMax:-1,cf:0,cfE:0,cob:0,cobC:0,wk:0,wkC:0,kgC:0,m3C:0,kmkgC:0,volLines:0,cap:0,kgCap:0,capM3:0,m3Cap:0};
   ['viajes','clientes','exps','arts'].forEach(s=>{if(!sets||sets.includes(s))g[s]=new Set()});
   return g;
 }
 function addTo(g,i){
   g.kg+=KG[i];g.m3+=M3[i];g.u+=Q[i];g.lines++;g.cf+=CF[i];if(VEXT[L.v[i]])g.cfE+=CF[i];g.cob+=COB[i];g.wk+=WK[i];
   if(CAPL[i]>0){g.cap+=CAPL[i];g.kgCap+=KG[i]}
+  if(CAPLM3[i]>0){g.capM3+=CAPLM3[i];g.m3Cap+=M3[i]}
   if(M3[i]*PAR.fvol>KG[i])g.volLines++;
   if(HASC[i]){g.kgC+=KG[i];g.m3C+=M3[i];g.cobC+=COB[i];g.wkC+=WK[i];const k0=KM[i];if(k0===k0)g.kmkgC+=KG[i]*k0}
   if(g.viajes)g.viajes.add(L.v[i]);if(g.clientes)g.clientes.add(L.c[i]);if(g.exps)g.exps.add(L.e[i]);if(g.arts)g.arts.add(L.a[i]);
@@ -401,7 +405,8 @@ const TCOLS=[
   {k:'kg',l:'Peso kg',f:g=>g.kg,d:0},{k:'m3',l:'Vol m³',f:g=>g.m3,d:2},{k:'cob',l:'Peso cobrable kg',f:g=>g.cob,d:0},
   {k:'base',l:'% líneas por volumen',f:g=>g.lines?g.volLines/g.lines:NaN,pct:1},
   {k:'km',l:'Km prom.',f:g=>g.cob>0?g.wk/g.cob:NaN,d:1},
-  {k:'cap',l:'Capacidad kg',f:g=>g.cap>0?g.cap:NaN,d:0},{k:'occ',l:'% ocupación',f:g=>g.cap>0?g.kgCap/g.cap:NaN,pct:1},
+  {k:'cap',l:'Capacidad kg',f:g=>g.cap>0?g.cap:NaN,d:0},{k:'occ',l:'% ocupación peso',f:g=>g.cap>0?g.kgCap/g.cap:NaN,pct:1},
+  {k:'capm3',l:'Capacidad m³',f:g=>g.capM3>0?g.capM3:NaN,d:1},{k:'occm3',l:'% ocupación volumen',f:g=>g.capM3>0?g.m3Cap/g.capM3:NaN,pct:1},
   {k:'cf',l:'Costo de transporte ₡',f:g=>g.cf,d:0,b:1},{k:'ckg',l:'₡ / kg cobrable',f:g=>g.cobC>0?g.cf/g.cobC:NaN,d:2},
   {k:'cu',l:'₡ / unidad',f:g=>g.u>0?g.cf/g.u:NaN,d:2},{k:'part',l:'% del costo',f:(g,p)=>p&&p.cf>0?g.cf/p.cf:NaN,pct:1}];
 const capTxt=v=>VCAP[v]>0?fmtN(VCAP[v]/1000,VCAP[v]%1000?2:0)+' t':'';
@@ -418,6 +423,7 @@ addView({id:'red',title:'Rutas y costos',render(host){
     ${kpi('Costo de transporte','₡ '+fmtN(t.cf,0),fmtN(vjC.con)+' de '+fmtN(t.viajes.size)+' viajes con costo de transporte')}
     ${kpi('Peso real / cobrable',fmtN(t.kg/1000,1)+' / '+fmtN(t.cob/1000,1)+' t','cobrable = máx(kg, m³×'+fmtN(PAR.fvol)+')')}
     ${kpi('Ocupación real',pct(t.cap>0?t.kgCap/t.cap:NaN),t.cap>0?fmtN(t.kgCap/1000,1)+' t de '+fmtN(t.cap/1000,1)+' t · '+fmtN(vjC.cap)+' viajes con capacidad':'sin viajes con capacidad')}
+    ${kpi('Ocupación por volumen',pct(t.capM3>0?t.m3Cap/t.capM3:NaN),t.capM3>0?fmtN(t.m3Cap,1)+' m³ de '+fmtN(t.capM3,1)+' m³':'sin capacidad volumétrica')}
     ${kpi('₡ / kg cobrable','₡ '+fmtN(t.cobC>0?t.cf/t.cobC:NaN,2),'₡ / kg real '+fmtN(t.kgC>0?t.cf/t.kgC:NaN,2))}
     ${kpi('₡ / ton·km','₡ '+fmtN(t.kmkgC>0?t.cf/(t.kmkgC/1000):NaN,0))}
     ${kpi('Viajes',fmtN(t.viajes.size),'peso con costo '+pct(t.kg?t.kgC/t.kg:NaN))}
@@ -427,7 +433,8 @@ addView({id:'red',title:'Rutas y costos',render(host){
   <details class="card" id="metodo" style="margin-top:12px" ${TR.met?'open':''}><summary style="cursor:pointer;font-weight:700;color:var(--teal)">¿Cómo se calcula y distribuye el costo? (referencia)</summary>
    <div style="margin-top:10px;font-size:13px;line-height:1.6">
    <p><b>1. Costo de cada viaje = Costo de transporte.</b> Se toma la columna <i>Costo Benchmark</i> (en el tablero se llama <b>Costo de transporte</b>) del <i>${esc(META.fuenteCosto)}</i> y se cruza por <b>Viaje WMS = N° viaje</b>. Si un viaje tiene varias filas (zonas o guías) se suman. Es el único costo del tablero; el <i>Costo flete ₡</i> del archivo queda guardado pero no se usa. Un viaje sin Costo de transporte no recibe costo.</p>
-   <p><b>Ocupación real del viaje</b> = peso real total del viaje (kg) ÷ capacidad del camión (kg). La capacidad sale de la hoja <i>Info camión</i> del mismo archivo, por la <b>Placa</b> del Resumen de rutas (1 t = 1 000 kg; "2,5 tn" = 2 500 kg; "500KG" = 500 kg). Si el viaje usa varias placas se suma la capacidad de cada camión. En un grupo (zona, cliente, día…) la ocupación es Σ kg ÷ Σ capacidad asignada, donde cada línea recibe capacidad en proporción a su peso real: equivale al promedio de sus viajes ponderado por kg. Viajes sin placa o con placa fuera de la hoja no entran en la ocupación.</p>
+   <p><b>Ocupación real del viaje</b> = peso real total del viaje (kg) ÷ capacidad del camión (kg). La capacidad sale de la hoja <i>Info camión</i> del mismo archivo, por la <b>Placa</b> del Resumen de rutas (1 t = 1 000 kg; "2,5 tn" = 2 500 kg; "500KG" = 500 kg). Si el viaje usa varias placas se suma la capacidad de cada camión. En un grupo (zona, cliente, día…) la ocupación es Σ kg ÷ Σ capacidad asignada, donde cada línea recibe capacidad en proporción a su peso real: equivale al promedio de sus viajes ponderado por kg. Viajes sin placa o con placa fuera de la hoja no entran en la ocupación.
+     <br><b>Ocupación por volumen</b> = volumen total del viaje (m³) ÷ capacidad volumétrica del camión (m³, columna <i>Capacidad Volumétrica</i> de la hoja flota propia), con el mismo criterio de asignación por línea (proporcional a su volumen).</p>
    <p><b>2. Peso cobrable de cada línea</b> (artículo × cliente × viaje):
      <br><code>peso cobrable = máx( peso real kg , volumen m³ × ${fmtN(PAR.fvol)} )</code>
      <br>peso real = unidades despachadas × peso unitario · volumen = unidades × volumen unitario (maestro completado). El factor ${fmtN(PAR.fvol)} kg/m³ se edita en la barra de filtros. Así un artículo liviano pero voluminoso paga por el espacio que ocupa.</p>
@@ -442,7 +449,7 @@ addView({id:'red',title:'Rutas y costos',render(host){
    <p style="color:var(--text3)">Supuestos: el factor ${META.factor} y el factor ${fmtN(PAR.fvol)} kg/m³ no son mediciones; los pesos/volúmenes con confianza baja son estimados por familia. La secuencia real de entrega no se conoce.</p>
    </div></details>
   <div class="tools" style="margin-top:12px"><div class="field"><label>Jerarquía</label><select id="th">${Object.entries(HIER).map(([k,h])=>`<option value="${k}" ${TR.h===k?'selected':''}>${esc(h.label)}</option>`).join('')}</select></div>
-   <div class="field"><label for="ts">Ordenar por</label><select id="ts"><option value="nombre" ${TR.sort==='nombre'?'selected':''}>Nombre / N° de viaje</option>${TCOLS.filter(c=>!c.pct||c.k==='part'||c.k==='occ').map(c=>`<option value="${c.k}" ${TR.sort===c.k?'selected':''}>${esc(c.l)}</option>`).join('')}</select></div>
+   <div class="field"><label for="ts">Ordenar por</label><select id="ts"><option value="nombre" ${TR.sort==='nombre'?'selected':''}>Nombre / N° de viaje</option>${TCOLS.filter(c=>!c.pct||c.k==='part'||c.k==='occ'||c.k==='occm3').map(c=>`<option value="${c.k}" ${TR.sort===c.k?'selected':''}>${esc(c.l)}</option>`).join('')}</select></div>
    <button class="btn ghost sm" id="tx1">Expandir nivel 1</button><button class="btn ghost sm" id="tx0">Contraer todo</button><button class="btn sm" id="tcsv">Exportar CSV (visible)</button></div>
   <div class="note">Clic en una fila para expandir (${esc(HIER[TR.h].label.replace(/ › /g,' → ').toLowerCase())}). El costo de un viaje que pasa por varias zonas se reparte entre ellas según peso cobrable × km de sus clientes. ⓘ abre el detalle. El costo de cada nivel es la suma de sus líneas, prorrateado por peso cobrable × distancia. En el nivel viaje, <i>Capacidad kg</i> es la del camión y <i>% ocupación</i> = peso real ÷ capacidad; debajo del viaje se muestra la parte de la capacidad que corresponde a cada nivel según su peso.</div>
   <div class="tablewrap" style="max-height:74vh"><table id="tt"><thead><tr><th>Nombre</th>${TCOLS.map(c=>`<th class="num">${esc(c.l)}</th>`).join('')}</tr></thead><tbody></tbody></table></div>`;
@@ -517,7 +524,7 @@ const BDF_COLS=[
   {k:'dens',l:'Densidad kg/m³',f:g=>g.m3>0?g.kg/g.m3:NaN,d:0},{k:'cob',l:'Peso cobrable kg',f:g=>g.cob,d:0},
   {k:'tkm',l:'Ton·km',f:g=>g.kmkg/1000,d:0},{k:'kmp',l:'Km prom. pond.',f:g=>g.kg>0?g.kmkg/g.kg:NaN,d:1},
   {k:'conkm',l:'% líneas con km',f:g=>g.lines?g.lk/g.lines:NaN,pct:1},
-  {k:'occ',l:'% ocupación',f:g=>g.cap>0?g.kgCap/g.cap:NaN,pct:1},
+  {k:'occ',l:'% ocupación peso',f:g=>g.cap>0?g.kgCap/g.cap:NaN,pct:1},{k:'occv',l:'% ocupación volumen',f:g=>g.capM3>0?g.m3Cap/g.capM3:NaN,pct:1},
   {k:'cf',l:'Costo de transporte ₡',f:g=>g.cf,d:0,b:1},{k:'pc',l:'% del costo',f:(g,t)=>t.cf>0?g.cf/t.cf:NaN,pct:1},
   {k:'pk',l:'% del peso',f:(g,t)=>t.kg>0?g.kg/t.kg:NaN,pct:1},
   {k:'ckgc',l:'₡/kg cobrable',f:g=>g.cobC>0?g.cf/g.cobC:NaN,d:2},{k:'ckg',l:'₡/kg real',f:g=>g.kgC>0?g.cf/g.kgC:NaN,d:2},
@@ -694,15 +701,17 @@ function leerCamiones(wb){
   const sn=wb.SheetNames.find(n=>/info\s*cami/i.test(n));if(!sn)return null;
   const A=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:null,raw:true});
   const find=re=>{for(let r=0;r<A.length;r++){const row=A[r]||[];for(let c=0;c<row.length;c++)if(re.test(String(row[c]==null?'':row[c]).trim()))return [r,c]}return null};
-  const out=[],tP=find(/^peso de carga$/i),tT=find(/^toneladas$/i);
+  const out=[],tP=find(/^peso de carga/i),tT=find(/^toneladas$/i);
+  let tV=null;if(tP){const row=A[tP[0]]||[];for(let c=0;c<row.length;c++)if(/^capacidad\s*volum/i.test(String(row[c]==null?'':row[c]).trim())){tV=[tP[0],c];break}}
+  const m3=row=>tV?pnum(row[tV[1]]):null;   // capacidad volumétrica (m³) de la misma fila
   const add=(h,cPla,fuente,prio,extra)=>{if(!h||cPla<0)return;for(let r=h[0]+1;r<A.length;r++){const row=A[r]||[];const pl=str(row[cPla]),cap=capKg(row[h[1]]);
     if(!pl||!plNorm(pl)||!cap)continue;out.push({placa:String(pl),capacidad_kg:cap,capacidad_texto:String(row[h[1]]),fuente,prioridad:prio,...extra(row)})}};
-  if(tP){add(tP,tP[1]-1,'Info camión · Flota propia',1,row=>({transportista:null,descripcion:[row[tP[1]+2],row[tP[1]+3]].filter(Boolean).join(' · ')||null}));
-    add(tP,tP[1]-2,'Info camión · Flota propia (código Agv)',2,row=>({transportista:null,descripcion:[row[tP[1]+2],row[tP[1]+3]].filter(Boolean).join(' · ')||null}))}
+  if(tP){add(tP,tP[1]-1,'Info camión · Flota propia',1,row=>({capacidad_m3:m3(row),transportista:null,descripcion:[row[tP[1]+2],row[tP[1]+3]].filter(Boolean).join(' · ')||null}));
+    add(tP,tP[1]-2,'Info camión · Flota propia (código Agv)',2,row=>({capacidad_m3:m3(row),transportista:null,descripcion:[row[tP[1]+2],row[tP[1]+3]].filter(Boolean).join(' · ')||null}))}
   if(tT)add(tT,tT[1]-1,'Info camión · Transportistas',3,row=>({transportista:str(row[tT[1]-2]),descripcion:null}));
   const best=new Map();out.forEach(x=>{const k=plNorm(x.placa),b=best.get(k);if(!b||x.prioridad<b.prioridad)best.set(k,x)});
   const conflictos=[...best.keys()].filter(k=>new Set(out.filter(x=>plNorm(x.placa)===k).map(x=>x.capacidad_kg)).size>1);
-  return {hoja:sn,filas:out,placas:best,conflictos};
+  return {hoja:sn,filas:out,placas:best,conflictos,conVol:!!tV};
 }
 const capDe=(cam,p)=>{if(!cam||!plNorm(p))return null;const k=plNorm(p),x=cam.placas.get(k);if(x)return x.capacidad_kg;
   const d=k.replace(/\D/g,'');if(!d)return null;const m=[...cam.placas.entries()].filter(([kk])=>kk.replace(/\D/g,'')===d);return m.length===1?m[0][1].capacidad_kg:null};
@@ -748,7 +757,7 @@ addView({id:'carga',title:'Cargar datos',render(host){
   host.innerHTML=`<div class="note">Carga diaria de archivos <b>Excel (.xlsx) o CSV</b>. Todo queda guardado en Supabase: los datos, el archivo original y la bitácora. Puedes subir el archivo del día o el acumulado del mes: <b>despachos</b> reemplaza los días que trae el archivo; <b>costos</b> reemplaza los viajes que trae.</div>
    <div id="cgEst" class="grid kpis" style="margin-top:10px"></div>
    ${ed?`<div class="grid cols2" style="margin-top:12px">${['despachos','costos'].map(t=>`<div class="card"><h3>${t==='despachos'?'1. Despachos WMS (CC del mes)':'2. Costos de transporte (Resumen de rutas)'}</h3>
-     <div class="note" style="margin-top:0">${t==='despachos'?'Export del WMS. Se toma solo Cofersa (0109). Columnas clave: ViajeWMH, Id Cliente, Id Artículo, Despachado, Fecha Carga.':'Hoja BASE (o primera hoja / CSV). Columnas clave: N° viaje, Fecha, Tipo, Costo Benchmark, Placa. La hoja Info camión trae la capacidad de cada placa.'}</div>
+     <div class="note" style="margin-top:0">${t==='despachos'?'Export del WMS. Se toma solo Cofersa (0109). Columnas clave: ViajeWMH, Id Cliente, Id Artículo, Despachado, Fecha Carga.':'Hoja BASE (o primera hoja / CSV). Columnas clave: N° viaje, Fecha, Tipo, Costo Benchmark, Placa. La hoja Info camión trae, por placa, la capacidad en peso (ton) y en volumen (m³).'}</div>
      <label class="btn ghost" style="cursor:pointer;margin:6px 0">Elegir archivo…<input type="file" data-t="${t}" accept=".xlsx,.xls,.csv,.txt" hidden></label>
      <div id="pv-${t}" style="font-size:12.5px"></div></div>`).join('')}</div>`:'<div class="warn">Solo usuarios editores pueden cargar archivos. Aquí puedes ver el historial y los pendientes.</div>'}
    <div class="grid cols2" style="margin-top:14px"><div class="card"><h3>Historial de cargas</h3><div id="cgH" class="note">Cargando…</div></div>
@@ -768,7 +777,7 @@ addView({id:'carga',title:'Cargar datos',render(host){
     box.innerHTML='Leyendo '+esc(f.name)+'…';
     try{const r=await leerArchivo(f,t);UP[t]=r;
       box.innerHTML=`<div class="kv" style="margin:6px 0"><div><b>Archivo</b>${esc(f.name)} · ${fmtN(f.size/1e6,1)} MB · hoja ${esc(r.hoja)}</div><div><b>Filas válidas</b>${fmtN(r.rows.length)} de ${fmtN(r.total)}</div>
-        <div><b>Rango</b>${esc(r.desde||'—')} → ${esc(r.hasta||'—')} (${r.dias} días)</div><div><b>Viajes</b>${fmtN(r.viajes)}</div>${t==='despachos'?`<div><b>Unidades</b>${fmtN(r.unidades)}</div>`:`<div><b>Costo de transporte</b>₡ ${fmtN(r.costo,0)}${r.sinBench?` · <span style="color:var(--red)">${fmtN(r.sinBench)} filas sin costo</span>`:''}</div><div><b>Camiones (${esc(r.cam?r.cam.hoja:'Info camión')})</b>${r.cam?fmtN(r.camiones.length)+' placas con capacidad'+(r.cam.conflictos.length?` · ${r.cam.conflictos.length} placa(s) con capacidades distintas en la hoja (se usa la de flota propia): ${esc(r.cam.conflictos.slice(0,6).join(', '))}`:''):'<span style="color:var(--red)">no viene la hoja: se conserva la tabla de camiones actual</span>'}</div><div><b>Viajes con capacidad</b>${fmtN(r.viajesCap)} de ${fmtN(r.viajes)} (${fmtN(r.viajesPlaca)} traen Placa)</div>`}
+        <div><b>Rango</b>${esc(r.desde||'—')} → ${esc(r.hasta||'—')} (${r.dias} días)</div><div><b>Viajes</b>${fmtN(r.viajes)}</div>${t==='despachos'?`<div><b>Unidades</b>${fmtN(r.unidades)}</div>`:`<div><b>Costo de transporte</b>₡ ${fmtN(r.costo,0)}${r.sinBench?` · <span style="color:var(--red)">${fmtN(r.sinBench)} filas sin costo</span>`:''}</div><div><b>Camiones (${esc(r.cam?r.cam.hoja:'Info camión')})</b>${r.cam?fmtN(r.camiones.length)+' placas con capacidad ('+fmtN(r.camiones.filter(x=>x.capacidad_m3>0).length)+' con volumen m³)'+(r.cam.conVol?'':' · <span style="color:var(--red)">no se encontró la columna Capacidad Volumétrica</span>')+(r.cam.conflictos.length?` · ${r.cam.conflictos.length} placa(s) con capacidades distintas en la hoja (se usa la de flota propia): ${esc(r.cam.conflictos.slice(0,6).join(', '))}`:''):'<span style="color:var(--red)">no viene la hoja: se conserva la tabla de camiones actual</span>'}</div><div><b>Viajes con capacidad</b>${fmtN(r.viajesCap)} de ${fmtN(r.viajes)} (${fmtN(r.viajesPlaca)} traen Placa)</div>`}
         <div><b>Omitidas</b>${t==='despachos'?`otras compañías ${fmtN(r.omit.otra)} · sin viaje ${fmtN(r.omit.sinViaje)} · sin fecha ${fmtN(r.omit.sinFecha)}`:`sin N° viaje ${fmtN(r.omit.sinViaje)}`}</div></div>
         <div class="note">${t==='despachos'?`Se reemplazarán en Supabase los despachos de los ${r.dias} día(s) del archivo.`:`Se reemplazarán los costos de los ${fmtN(r.viajes)} viajes del archivo${r.cam?' y la tabla de camiones completa':''}.`}</div>
         <button class="btn" data-go="${t}" ${r.rows.length?'':'disabled'}>Cargar a Supabase</button> <span data-pr="${t}" class="note"></span>`;
@@ -797,7 +806,7 @@ addView({id:'calidad',title:'Calidad de datos',render(host){
 function openDetail(dimId,key){
   const D=DIMS[dimId],idx=subset(dimId,key,FILT),t=enrich(total(idx));
   let info='';
-  if(dimId==='viaje'){const v=CAT2VJ[key];info=[['Viaje WMS',VJ.id[v]],['Cargas (Número Viaje)',VJ.cargas[v]],['Inicio',VJ.ini[v]],['Fin',VJ.fin[v]],['Placa',VJ.placa[v]],['Transporte',VJ.trans[v]],['Conductor (cédula)',VJ.cond[v]],['Recurso',VJ.rec[v]],['Costo de transporte ₡',VJ.conCosto[v]?fmtN(VCOSTO[v],0):'Sin costo de transporte'],['Placa (Resumen)',VJ.cfPlaca[v]],['Capacidad camión',VCAP[v]?fmtN(VCAP[v],0)+' kg':(VJ.sinCap&&VJ.sinCap[v]?'Placa sin capacidad en Info camión: '+VJ.sinCap[v]:'Sin placa en el Resumen')],['Peso real del viaje',fmtN(TKG[v],0)+' kg'],['% ocupación real',VCAP[v]?pct(TKG[v]/VCAP[v]):'—'],['Km real (odómetro)',fmtN(VJ.kmReal[v],0)],['Venta total ₡',fmtN(VJ.venta[v],0)],['% flete vs venta',VJ.venta[v]?pct(t.cf/VJ.venta[v]):'—'],['Fecha Resumen',VJ.cfFecha[v]],['Zona(s) Resumen',VJ.cfZona[v]],['Tipo',VJ.cfTipo[v]],['Transportista',VJ.cfTrans[v]],['Estado guía',VJ.cfEstado[v]],['Guía(s)',VJ.cfGuia[v]],['Alerta',VJ.cfAlerta[v]]]}
+  if(dimId==='viaje'){const v=CAT2VJ[key];info=[['Viaje WMS',VJ.id[v]],['Cargas (Número Viaje)',VJ.cargas[v]],['Inicio',VJ.ini[v]],['Fin',VJ.fin[v]],['Placa',VJ.placa[v]],['Transporte',VJ.trans[v]],['Conductor (cédula)',VJ.cond[v]],['Recurso',VJ.rec[v]],['Costo de transporte ₡',VJ.conCosto[v]?fmtN(VCOSTO[v],0):'Sin costo de transporte'],['Placa (Resumen)',VJ.cfPlaca[v]],['Capacidad camión',VCAP[v]?fmtN(VCAP[v],0)+' kg':(VJ.sinCap&&VJ.sinCap[v]?'Placa sin capacidad en Info camión: '+VJ.sinCap[v]:'Sin placa en el Resumen')],['Peso real del viaje',fmtN(TKG[v],0)+' kg'],['% ocupación real (peso)',VCAP[v]?pct(TKG[v]/VCAP[v]):'—'],['Capacidad volumétrica',VCAPM3[v]?fmtN(VCAPM3[v],2)+' m³':'—'],['Volumen del viaje',fmtN(TM3[v],2)+' m³'],['% ocupación por volumen',VCAPM3[v]?pct(TM3[v]/VCAPM3[v]):'—'],['Km real (odómetro)',fmtN(VJ.kmReal[v],0)],['Venta total ₡',fmtN(VJ.venta[v],0)],['% flete vs venta',VJ.venta[v]?pct(t.cf/VJ.venta[v]):'—'],['Fecha Resumen',VJ.cfFecha[v]],['Zona(s) Resumen',VJ.cfZona[v]],['Tipo',VJ.cfTipo[v]],['Transportista',VJ.cfTrans[v]],['Estado guía',VJ.cfEstado[v]],['Guía(s)',VJ.cfGuia[v]],['Alerta',VJ.cfAlerta[v]]]}
   else if(dimId==='cliente'){const c=CAT2CL[key];info=[['Id',CL.id[c]],['Nombre',CL.nombre[c]],['Razón social',CL.rs[c]],['Agrupación',CL.agr[c]],['Vendedor',CL.vend[c]],['Ruta / Zona',(CL.ruta[c]||'—')+' / '+(CL.zona[c]||'—')],['Zona propuesta',CL.zonaProp[c]],['Provincia / Cantón',(CL.prov[c]||'—')+' / '+(CL.canton[c]||'—')],['Región',CL.region[c]],['Km línea recta',fmtN(CL.kmRecta[c],1)],['Km ruta (×'+META.factor+')',fmtN(CL.kmRuta[c],1)],['Estado geo',CL.geo[c]],['Zona',CL.zonaNom[c]],['Zona/km estimado',CL.zonaEst[c]||'No (dato del archivo)'],['Cruce',CL.cruce[c]]]}
   else if(dimId==='articulo'){const a=CAT2AR[key];info=[['Id',AR.id[a]],['Descripción',AR.desc[a]],['BDF',AR.bdf[a]],['Peso unit kg',fmtN(AR.kg[a],4)],['Vol unit m³',fmtN(AR.m3[a],6)],['Fuente peso',AR.fp[a]],['Fuente volumen',AR.fv[a]],['Confianza',AR.conf[a]]]}
   const subs=['viaje','cliente','articulo','dia'].filter(d=>d!==dimId);
